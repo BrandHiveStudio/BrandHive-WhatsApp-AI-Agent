@@ -340,3 +340,28 @@ create trigger set_updated_at before update on notes
 -- =========================================================
 alter publication supabase_realtime add table messages;
 alter publication supabase_realtime add table conversations;
+
+-- =========================================================
+-- 15. service_role table-level SELECT grants (Phase 4 Step 1F)
+--     Applied via Supabase MCP apply_migration as migration
+--     "grant_service_role_select_knowledge_tables".
+--
+--     Discovered during live AI validation: service_role had only
+--     structural (REFERENCES/TRIGGER/TRUNCATE) privileges on every table
+--     in this project -- no SELECT/INSERT/UPDATE/DELETE anywhere -- so the
+--     server-side knowledge tools (search_services, get_service_pricing,
+--     list_addons, search_faqs, get_business_info) failed with Postgres
+--     42501 "permission denied" on every call. RLS was never the problem:
+--     service_role already bypasses RLS by role attribute; it simply
+--     never had the underlying table grant to read these tables at all.
+--
+--     This grants only SELECT, only to service_role, only on the four
+--     knowledge tables the AI's read-only tools query. It does not touch
+--     RLS, policies, other tables, or any other role -- conversations and
+--     messages show the same missing-grant gap but are intentionally left
+--     untouched here (out of scope for this fix; see Step 1F report).
+-- =========================================================
+grant select on public.services to service_role;
+grant select on public.service_addons to service_role;
+grant select on public.faqs to service_role;
+grant select on public.settings to service_role;
