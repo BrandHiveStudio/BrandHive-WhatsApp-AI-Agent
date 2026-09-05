@@ -4,6 +4,7 @@ import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { getAIResponse } from "@/lib/ai";
 import { verifyMetaSignature } from "@/lib/webhook-signature";
 import { getRequiredEnv } from "@/lib/env";
+import { detectMessageLanguage } from "@/lib/language-detect";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -151,10 +152,17 @@ export async function POST(request: NextRequest) {
       return Response.json({ status: "error" }, { status: 500 });
     }
 
-    // Update conversation timestamp
+    // Update conversation timestamp and the coarse detected script/language
+    // (deterministic, code-only -- see lib/language-detect.ts). This is
+    // write-only for now: it's not yet fed back into the AI's context or a
+    // dashboard filter, just persisted for a later phase to use.
+    const detectedLanguage = detectMessageLanguage(text);
     await supabase
       .from("conversations")
-      .update({ updated_at: new Date().toISOString() })
+      .update({
+        updated_at: new Date().toISOString(),
+        language: detectedLanguage ?? conversation.language,
+      })
       .eq("id", conversation.id);
 
     // If mode is 'human', don't auto-reply

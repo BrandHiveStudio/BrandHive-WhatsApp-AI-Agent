@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import { TEMPORARY_SAFE_SYSTEM_PROMPT, KNOWLEDGE_TOOL_RULES } from "@/lib/system-prompt";
+import { BRANDHIVE_AGENT_SCRIPT, KNOWLEDGE_TOOL_RULES } from "@/lib/system-prompt";
 import { getRequiredEnv } from "@/lib/env";
 import { KNOWLEDGE_TOOLS, executeToolCall } from "@/lib/ai-tools";
 
@@ -27,7 +27,7 @@ export async function getAIResponse(
   const model = process.env.AI_MODEL || "anthropic/claude-sonnet-4-20250514";
 
   const conversation: ChatCompletionMessageParam[] = [
-    { role: "system", content: `${TEMPORARY_SAFE_SYSTEM_PROMPT}\n\n${KNOWLEDGE_TOOL_RULES}` },
+    { role: "system", content: `${BRANDHIVE_AGENT_SCRIPT}\n\n${KNOWLEDGE_TOOL_RULES}` },
     ...messages,
   ];
 
