@@ -365,3 +365,29 @@ grant select on public.services to service_role;
 grant select on public.service_addons to service_role;
 grant select on public.faqs to service_role;
 grant select on public.settings to service_role;
+
+-- =========================================================
+-- 16. Operational table grants (Phase 4 Step 1H)
+--     Applied via Supabase MCP apply_migration as migration
+--     "grant_service_role_operational_tables".
+--
+--     Same root cause as section 15, confirmed by Step 1G's diagnosis to
+--     also affect conversations/messages/profiles: service_role had no
+--     SELECT/INSERT/UPDATE on conversations or messages, so the webhook
+--     could not store or answer an inbound WhatsApp message at all, and
+--     authenticated had no SELECT on profiles, so requireStaffUser() (the
+--     gate on every staff-facing dashboard API route, which queries
+--     profiles via the user's own session, not service_role) could never
+--     succeed for any staff member.
+--
+--     Scoped to exactly what current application code exercises: no
+--     DELETE/TRUNCATE, no service_role write on profiles (no code path
+--     inserts/updates profiles), no anon grants, no grants on notes/
+--     lead_events (unused by any current code path), no authenticated
+--     data grants on conversations/messages (the app always goes through
+--     service_role server-side for those). Does not touch RLS or
+--     policies.
+-- =========================================================
+grant select, insert, update on public.conversations to service_role;
+grant select, insert, update on public.messages to service_role;
+grant select on public.profiles to authenticated;
