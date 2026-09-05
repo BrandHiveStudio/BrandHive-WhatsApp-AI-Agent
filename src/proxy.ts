@@ -37,9 +37,14 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isLoginPage = request.nextUrl.pathname === "/login";
+  const pathname = request.nextUrl.pathname;
+  const isLoginPage = pathname === "/login";
+  const isPublicPolicyPage =
+    pathname === "/privacy-policy" ||
+    pathname === "/terms" ||
+    pathname === "/data-deletion";
 
-  if (!user && !isLoginPage) {
+  if (!user && !isLoginPage && !isPublicPolicyPage) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/lib/supabase-browser";
@@ -38,7 +39,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-[#0f0f0f]">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[#0f0f0f] px-4 py-8">
       <form
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-xl border border-white/[0.06] bg-[#141414] p-6"
@@ -84,6 +85,20 @@ export default function LoginPage() {
           {loading ? "Signing in..." : "Sign in"}
         </button>
       </form>
+
+      <footer className="mt-6 flex flex-wrap items-center justify-center gap-3 text-xs text-white/40">
+        <Link href="/privacy-policy" className="hover:text-white/80 transition-colors">
+          Privacy Policy
+        </Link>
+        <span>•</span>
+        <Link href="/terms" className="hover:text-white/80 transition-colors">
+          Terms of Service
+        </Link>
+        <span>•</span>
+        <Link href="/data-deletion" className="hover:text-white/80 transition-colors">
+          Data Deletion
+        </Link>
+      </footer>
     </div>
   );
 }
