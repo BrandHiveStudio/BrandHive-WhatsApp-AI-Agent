@@ -1,0 +1,25 @@
+import { NextRequest } from "next/server";
+import { supabase } from "@/lib/supabase";
+import { requireStaffUser } from "@/lib/auth";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireStaffUser();
+  if ("error" in auth) return auth.error;
+
+  const { id } = await params;
+
+  const { data: messages, error } = await supabase
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", id)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  return Response.json(messages);
+}
