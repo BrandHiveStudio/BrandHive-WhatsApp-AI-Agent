@@ -32,7 +32,19 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: "node",
       include: ["src/lib/__live-tests__/**/*.test.ts"],
-      testTimeout: 30000,
+      // 30s was too tight for openrouter/free: 3 of 36 scenarios in the
+      // 2026-09-05 run exceeded it while the underlying request kept running
+      // in the background, and Vitest doesn't cancel an in-flight test on
+      // timeout -- so the late response printed under the NEXT scenario's
+      // console output instead, mislabeling it. Real observed durations for
+      // calls that did complete ranged up to ~28s, so 60s gives realistic
+      // free-tier headroom without masking a truly hung request forever.
+      // This does not eliminate the possibility of an even slower response
+      // still outliving the budget (true cancellation would need an
+      // AbortSignal threaded through lib/ai.ts, which is production code
+      // and out of scope here) -- it reduces the failure mode's frequency
+      // rather than guaranteeing it away.
+      testTimeout: 60000,
     },
   };
 });
