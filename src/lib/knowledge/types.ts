@@ -63,7 +63,10 @@ export interface AddonDetail {
 }
 
 export type AddonListResult =
-  | { status: "results"; service: ServiceSummary; addons: AddonDetail[] }
+  // scope "global": add-ons not tied to one specific service (BrandHive's
+  // general add-on catalog) -- service is always null here.
+  // scope "service": add-ons attached specifically to the resolved service.
+  | { status: "results"; scope: "global" | "service"; service: ServiceSummary | null; addons: AddonDetail[] }
   | { status: "no_match"; query: string }
   | { status: "ambiguous"; query: string; candidates: ServiceSummary[] }
   | { status: "error"; message: string };
@@ -103,7 +106,9 @@ export interface GetServicePricingArgs {
 }
 
 export interface ListAddonsArgs {
-  service: string;
+  /** Omit to retrieve BrandHive's general/global add-on catalog (not tied
+   * to one specific service). */
+  service?: string;
 }
 
 export interface SearchFaqsArgs {

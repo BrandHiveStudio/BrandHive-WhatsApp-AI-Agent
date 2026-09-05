@@ -8,7 +8,7 @@ type QueryResult = { data: unknown; error: { message: string } | null };
  * -- just enough surface for the knowledge layer's call patterns. */
 function makeBuilder(result: QueryResult) {
   const builder: Record<string, unknown> = {};
-  const chain = ["select", "eq", "order", "limit", "maybeSingle", "single"];
+  const chain = ["select", "eq", "is", "order", "limit", "maybeSingle", "single"];
   for (const method of chain) {
     builder[method] = vi.fn(() => builder);
   }

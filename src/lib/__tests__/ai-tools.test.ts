@@ -32,6 +32,21 @@ describe("executeToolCall", () => {
     expect(getBusinessInfo).toHaveBeenCalledWith(undefined);
   });
 
+  it("dispatches list_addons with the service argument when provided", async () => {
+    await executeToolCall("list_addons", JSON.stringify({ service: "website design" }));
+    expect(listAddons).toHaveBeenCalledWith("website design");
+  });
+
+  it("dispatches list_addons with undefined (global scope) when service is omitted", async () => {
+    await executeToolCall("list_addons", JSON.stringify({}));
+    expect(listAddons).toHaveBeenCalledWith(undefined);
+  });
+
+  it("dispatches list_addons with undefined when service is blank/whitespace", async () => {
+    await executeToolCall("list_addons", JSON.stringify({ service: "   " }));
+    expect(listAddons).toHaveBeenCalledWith(undefined);
+  });
+
   it("returns a controlled error for an unknown tool name rather than throwing", async () => {
     const result = (await executeToolCall("delete_everything", "{}")) as { status: string; message: string };
     expect(result.status).toBe("error");

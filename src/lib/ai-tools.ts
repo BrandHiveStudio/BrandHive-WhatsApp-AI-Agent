@@ -48,13 +48,16 @@ export const KNOWLEDGE_TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "list_addons",
-      description: "List authoritative add-ons available for one specific BrandHive service, with their pricing.",
+      description:
+        "List authoritative BrandHive add-ons with their pricing. Pass `service` to get add-ons for one specific service; omit it to get BrandHive's general/global add-on catalog (use this for questions like 'what add-ons do you have?' or 'any extra options?' that aren't about one specific service).",
       parameters: {
         type: "object",
         properties: {
-          service: { type: "string", description: "The service name or slug to list add-ons for." },
+          service: {
+            type: "string",
+            description: "Optional: a service name or slug to list add-ons for. Omit for the general add-on catalog.",
+          },
         },
-        required: ["service"],
       },
     },
   },
@@ -109,7 +112,7 @@ export async function executeToolCall(name: string, rawArgs: string): Promise<un
     case "get_service_pricing":
       return getServicePricing(String(args.service ?? ""));
     case "list_addons":
-      return listAddons(String(args.service ?? ""));
+      return listAddons(typeof args.service === "string" && args.service.trim() ? args.service : undefined);
     case "search_faqs":
       return searchFaqs(String(args.query ?? ""), typeof args.limit === "number" ? args.limit : undefined);
     case "get_business_info":

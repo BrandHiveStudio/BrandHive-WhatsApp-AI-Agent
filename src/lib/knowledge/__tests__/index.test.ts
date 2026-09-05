@@ -83,6 +83,39 @@ describe("searchServices", () => {
     expect(result.status).toBe("error");
     expect(result.matches).toHaveLength(0);
   });
+
+  it("matches across hyphens (e.g. 'ecommerce' finds 'E-Commerce Website')", async () => {
+    const ecommerce = service({
+      id: "svc-ecom",
+      name: "E-Commerce Website",
+      slug: "web-svc-03",
+      category: "website",
+    });
+    currentMock = makeSupabaseMock({ services: { data: [LOGO, WEBSITE, ecommerce], error: null } });
+    const result = await searchServices("ecommerce");
+    expect(result.status).toBe("results");
+    expect(result.matches.map((m) => m.slug)).toContain("web-svc-03");
+  });
+
+  it("surfaces packages for a generic 'packages' query even when no name/category contains that word", async () => {
+    const pkg = service({
+      id: "svc-pkg",
+      name: "Starter Brand Identity",
+      slug: "brd-pkg-01",
+      category: "branding",
+      item_type: "package",
+      pricing_type: "starting_from",
+      price: null,
+      starting_price: 15000,
+    });
+    currentMock = makeSupabaseMock({ services: { data: [LOGO, WEBSITE, pkg], error: null } });
+    const result = await searchServices("do you have any packages");
+    expect(result.status).toBe("results");
+    expect(result.matches.map((m) => m.slug)).toContain("brd-pkg-01");
+    // The plain individual services shouldn't be pulled in just because the
+    // query contained the word "packages".
+    expect(result.matches.map((m) => m.slug)).not.toContain("logo-design");
+  });
 });
 
 describe("getServicePricing", () => {
@@ -144,7 +177,7 @@ describe("getServicePricing", () => {
 });
 
 describe("listAddons", () => {
-  it("returns addons for a resolved service", async () => {
+  it("returns service-scoped addons for a resolved service", async () => {
     const addon: ServiceAddon = {
       id: "addon-1",
       service_id: "svc-logo",
@@ -166,6 +199,8 @@ describe("listAddons", () => {
     const result = await listAddons("logo-design");
     expect(result.status).toBe("results");
     if (result.status === "results") {
+      expect(result.scope).toBe("service");
+      expect(result.service?.slug).toBe("logo-design");
       expect(result.addons).toHaveLength(1);
       expect(result.addons[0].display_price).toBe("LKR 1,500");
     }
@@ -175,6 +210,41 @@ describe("listAddons", () => {
     currentMock = makeSupabaseMock({ services: { data: [LOGO, WEBSITE, BRANDING], error: null } });
     const result = await listAddons("submarine repair");
     expect(result.status).toBe("no_match");
+  });
+
+  it("returns the global add-on catalog when no service is specified (matches actual BrandHive data: every imported add-on is global)", async () => {
+    const globalAddon: ServiceAddon = {
+      id: "addon-global-1",
+      service_id: null,
+      name: "Additional Page",
+      description: null,
+      pricing_type: "starting_from",
+      price: null,
+      starting_price: 4000,
+      currency: "LKR",
+      unit: null,
+      active: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    currentMock = makeSupabaseMock({ service_addons: { data: [globalAddon], error: null } });
+    const result = await listAddons();
+    expect(result.status).toBe("results");
+    if (result.status === "results") {
+      expect(result.scope).toBe("global");
+      expect(result.service).toBeNull();
+      expect(result.addons).toHaveLength(1);
+      expect(result.addons[0].display_price).toBe("Starting from LKR 4,000");
+    }
+  });
+
+  it("also treats a blank/whitespace-only service argument as a global lookup", async () => {
+    currentMock = makeSupabaseMock({ service_addons: { data: [], error: null } });
+    const result = await listAddons("   ");
+    expect(result.status).toBe("results");
+    if (result.status === "results") {
+      expect(result.scope).toBe("global");
+    }
   });
 });
 

@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { Service } from "@/lib/types";
+import type { Service, ServiceItemType } from "@/lib/types";
 import { formatPriceDisplay } from "@/lib/knowledge/format";
 import type {
   ServiceSummary,
@@ -68,17 +68,54 @@ async function fetchActiveServices(): Promise<Service[]> {
   return (data ?? []) as Service[];
 }
 
-function scoreMatch(query: string, haystacks: (string | null)[]): number {
+// Strips hyphen/dash punctuation so "ecommerce" matches "E-Commerce Website"
+// and "ui ux" matches "UI/UX Design" -- generic punctuation normalization,
+// not a per-word synonym dictionary.
+function normalizeForSearch(text: string): string {
+  return text.toLowerCase().replace(/[-–—/]/g, "");
+}
+
+// A small, generic map from structural query words to item_type -- lets
+// "packages" or "individual services" surface the right rows even when no
+// service's name/category literally contains that word. Not a synonym
+// dictionary for specific services; just the two structural categories the
+// schema itself already distinguishes.
+const ITEM_TYPE_KEYWORDS: Record<string, ServiceItemType> = {
+  package: "package",
+  packages: "package",
+  bundle: "package",
+  bundles: "package",
+  service: "service",
+  services: "service",
+};
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Whole-word containment, not raw substring containment -- otherwise short
+// common words falsely match inside unrelated words (e.g. the term "you"
+// would substring-match inside "your", turning almost any query into a hit).
+function containsWholeWord(haystack: string, term: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(term)}\\b`).test(haystack);
+}
+
+function scoreMatch(query: string, haystacks: (string | null)[], itemType?: ServiceItemType): number {
   const terms = query
-    .toLowerCase()
     .split(/\s+/)
-    .map((t) => t.trim())
+    .map((t) => normalizeForSearch(t.trim()))
     .filter((t) => t.length >= 2);
 
   if (terms.length === 0) return 0;
 
-  const text = haystacks.filter(Boolean).join(" ").toLowerCase();
-  return terms.reduce((score, term) => (text.includes(term) ? score + 1 : score), 0);
+  const text = normalizeForSearch(haystacks.filter(Boolean).join(" "));
+
+  return terms.reduce((score, term) => {
+    let next = score;
+    if (containsWholeWord(text, term)) next += 1;
+    if (itemType && ITEM_TYPE_KEYWORDS[term] === itemType) next += 1;
+    return next;
+  }, 0);
 }
 
 type ResolvedService =
@@ -115,7 +152,10 @@ export async function searchServices(query: string, limit = 5): Promise<ServiceS
   try {
     const services = await fetchActiveServices();
     const scored = services
-      .map((row) => ({ row, score: scoreMatch(query, [row.name, row.description, row.category]) }))
+      .map((row) => ({
+        row,
+        score: scoreMatch(query, [row.name, row.description, row.category], row.item_type),
+      }))
       .filter((s) => s.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, Math.max(1, limit));
@@ -175,8 +215,47 @@ export async function getServicePricing(service: string): Promise<ServicePricing
 // list_addons
 // ---------------------------------------------------------------------
 
-export async function listAddons(service: string): Promise<AddonListResult> {
+function toAddonDetail(row: {
+  name: string;
+  description: string | null;
+  pricing_type: ServicePricingDetail["pricing_type"];
+  price: number | null;
+  starting_price: number | null;
+  currency: string;
+  unit: string | null;
+}): AddonDetail {
+  return {
+    name: row.name,
+    description: row.description,
+    pricing_type: row.pricing_type,
+    price: row.price,
+    starting_price: row.starting_price,
+    currency: row.currency,
+    unit: row.unit,
+    display_price: formatPriceDisplay(row),
+  };
+}
+
+/**
+ * Lists BrandHive add-ons. Pass a service name/slug to get add-ons attached
+ * specifically to that service; omit it to get BrandHive's general/global
+ * add-on catalog (add-ons not tied to any one service -- this is the actual
+ * shape of the current BrandHive data: every imported add-on is global).
+ */
+export async function listAddons(service?: string): Promise<AddonListResult> {
   try {
+    if (!service || !service.trim()) {
+      const { data, error } = await supabase
+        .from("service_addons")
+        .select("*")
+        .is("service_id", null)
+        .eq("active", true);
+
+      if (error) throw error;
+
+      return { status: "results", scope: "global", service: null, addons: (data ?? []).map(toAddonDetail) };
+    }
+
     const services = await fetchActiveServices();
     const resolved = resolveService(service, services);
 
@@ -195,18 +274,12 @@ export async function listAddons(service: string): Promise<AddonListResult> {
 
     if (error) throw error;
 
-    const addons: AddonDetail[] = (data ?? []).map((row) => ({
-      name: row.name,
-      description: row.description,
-      pricing_type: row.pricing_type,
-      price: row.price,
-      starting_price: row.starting_price,
-      currency: row.currency,
-      unit: row.unit,
-      display_price: formatPriceDisplay(row),
-    }));
-
-    return { status: "results", service: toSummary(resolved.row), addons };
+    return {
+      status: "results",
+      scope: "service",
+      service: toSummary(resolved.row),
+      addons: (data ?? []).map(toAddonDetail),
+    };
   } catch (err) {
     return { status: "error", message: err instanceof Error ? err.message : "Knowledge lookup failed" };
   }
