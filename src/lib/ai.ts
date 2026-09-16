@@ -23,19 +23,37 @@ function getGeminiClient(): OpenAI {
 const FALLBACK_MESSAGE = "Sorry, I couldn't generate a response.";
 const MAX_TOOL_ITERATIONS = 5;
 
+let _activeModelOverride: string | null = null;
+
 async function createCompletionWithRetry(
   params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
 ): Promise<OpenAI.Chat.ChatCompletion> {
   const maxRetries = 2;
+  let currentParams = { ...params };
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await getGeminiClient().chat.completions.create(params);
+      const response = await getGeminiClient().chat.completions.create(currentParams);
+      if (currentParams.model !== params.model) {
+        _activeModelOverride = currentParams.model;
+      }
+      return response;
     } catch (err: unknown) {
-      const isRateLimit =
+      const isTransient =
         err instanceof Error &&
-        (err.message.includes("429") || (err as { status?: number }).status === 429);
-      if (isRateLimit && attempt < maxRetries) {
-        await new Promise((resolve) => setTimeout(resolve, 3000 * (attempt + 1)));
+        (err.message.includes("429") ||
+          err.message.includes("503") ||
+          err.message.includes("500") ||
+          [429, 500, 503].includes((err as { status?: number }).status ?? 0));
+
+      if (isTransient && attempt < maxRetries) {
+        if (currentParams.model === "gemini-3.6-flash") {
+          currentParams = { ...currentParams, model: "gemini-3.5-flash" };
+          _activeModelOverride = "gemini-3.5-flash";
+        } else if (currentParams.model === "gemini-3.5-flash") {
+          currentParams = { ...currentParams, model: "gemini-3.5-flash-lite" };
+          _activeModelOverride = "gemini-3.5-flash-lite";
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
         continue;
       }
       throw err;
@@ -52,7 +70,7 @@ export async function getAIResponse(
   // is no longer available to new users. Please update your code to use models/gemini-3.6-flash").
   // Automatically map retired gemini-2.5-flash to Google's active replacement gemini-3.6-flash.
   const rawModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const model = rawModel === "gemini-2.5-flash" ? "gemini-3.6-flash" : rawModel;
+  const model = _activeModelOverride || (rawModel === "gemini-2.5-flash" ? "gemini-3.6-flash" : rawModel);
 
   const activeBehavior = behaviorOverride
     ? { ...(await getAIBehaviorConfig()), ...behaviorOverride }

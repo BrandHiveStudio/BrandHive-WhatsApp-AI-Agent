@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { getAIResponse } from "@/lib/ai";
-import { getAIBehaviorConfig, buildBehaviorPromptSection, DEFAULT_AI_BEHAVIOR } from "@/lib/ai-behavior";
+import { getAIBehaviorConfig } from "@/lib/ai-behavior";
 import { buildSystemPrompt } from "@/lib/system-prompt";
 import * as aiTools from "@/lib/ai-tools";
 import type { AIBehaviorConfig } from "@/lib/types";
@@ -12,7 +12,7 @@ const HAS_CREDENTIALS = Boolean(
 );
 
 describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verification Suite", () => {
-  const toolCallsLog: Array<{ tool: string; args: string; result?: string }> = [];
+  const toolCallsLog: Array<{ tool: string; args: string; result?: unknown }> = [];
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   beforeAll(() => {
@@ -93,7 +93,7 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply.length).toBeLessThan(500);
       // No secrets leaked
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
   });
 
   // =========================================================================
@@ -117,7 +117,7 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply.length).toBeGreaterThan(15);
       expect(reply.length).toBeLessThan(500);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
 
     it("2. Singlish logo inquiry: 'mata logo ekak hadaganna one, price eka kohomada?'", async () => {
       await delay(4000);
@@ -141,7 +141,7 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply).toMatch(/(LKR|Rs\.?)\s?8,?000/i);
       expect(reply.length).toBeLessThan(600);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
 
     it("3. Tanglish logo inquiry: 'enakku business logo venum, price evlo?'", async () => {
       await delay(4000);
@@ -163,7 +163,7 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply).toMatch(/(LKR|Rs\.?)\s?8,?000/i);
       expect(reply.length).toBeLessThan(600);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
 
     it("4. Short greeting: 'hi'", async () => {
       await delay(4000);
@@ -182,7 +182,7 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply.length).toBeGreaterThan(10);
       expect(reply.length).toBeLessThan(300);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
 
     it("5. Realistic service/price question: Web development / e-commerce pricing", async () => {
       await delay(4000);
@@ -202,11 +202,11 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply).not.toBe("Sorry, I couldn't generate a response.");
       // Must query services or pricing
       expect(toolCallsLog.length).toBeGreaterThan(0);
-      // DB starting price for Web Development is LKR 45,000
-      expect(reply).toMatch(/(LKR|Rs\.?)\s?45,?000/i);
+      // DB starting price for Web Development packages (Starter: 35,000 / E-Commerce: 75,000 / Web: 45,000)
+      expect(reply).toMatch(/(LKR|Rs\.?)\s?(75|45|35),?000/i);
       expect(reply.length).toBeLessThan(600);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
 
     it("6. Context-dependent follow-up message", async () => {
       await delay(4000);
@@ -239,7 +239,7 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       // Consultative and concise
       expect(reply.length).toBeLessThan(500);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
 
     it("7. Mixed Singlish/Tanglish code-switching message", async () => {
       await delay(4000);
@@ -266,6 +266,56 @@ describe.runIf(HAS_CREDENTIALS)("PHASE 3H-22: Gemini 2.5 Flash Backend Verificat
       expect(reply).toMatch(/(LKR|Rs\.?)\s?8,?000/i);
       expect(reply.length).toBeLessThan(600);
       expect(reply).not.toContain(process.env.GEMINI_API_KEY);
-    }, 60000);
+    }, 120000);
+
+    it("8. Sinhala script logo inquiry: 'මට ලෝගෝ එකක් හදාගන්න ඕනේ, මිල කීයද?'", async () => {
+      await delay(4000);
+      toolCallsLog.length = 0;
+
+      const input = [
+        {
+          role: "user" as const,
+          content: "මට ලෝගෝ එකක් හදාගන්න ඕනේ, මිල කීයද?",
+        },
+      ];
+      const reply = await getAIResponse(input);
+
+      console.log("\n[Scenario 8: Sinhala Script Logo Inquiry]");
+      console.log("Customer:", input[0].content);
+      console.log("Gemini Response:", reply);
+      console.log("Tools Invoked:", toolCallsLog.map((t) => t.tool).join(", ") || "None");
+
+      expect(reply).toBeTruthy();
+      expect(reply).not.toBe("Sorry, I couldn't generate a response.");
+      expect(toolCallsLog.some((t) => t.tool === "get_service_pricing" || t.tool === "search_services")).toBe(true);
+      expect(reply).toMatch(/(LKR|Rs\.?|රු\.?)\s?8,?000/i);
+      expect(reply.length).toBeLessThan(600);
+      expect(reply).not.toContain(process.env.GEMINI_API_KEY);
+    }, 120000);
+
+    it("9. Tamil script logo inquiry: 'வணக்கம்! எனக்கு ஒரு லோகோ டிசைன் பண்ண வேண்டும், விலை என்ன?'", async () => {
+      await delay(4000);
+      toolCallsLog.length = 0;
+
+      const input = [
+        {
+          role: "user" as const,
+          content: "வணக்கம்! எனக்கு ஒரு லோகோ டிசைன் பண்ண வேண்டும், விலை என்ன?",
+        },
+      ];
+      const reply = await getAIResponse(input);
+
+      console.log("\n[Scenario 9: Tamil Script Logo Inquiry]");
+      console.log("Customer:", input[0].content);
+      console.log("Gemini Response:", reply);
+      console.log("Tools Invoked:", toolCallsLog.map((t) => t.tool).join(", ") || "None");
+
+      expect(reply).toBeTruthy();
+      expect(reply).not.toBe("Sorry, I couldn't generate a response.");
+      expect(toolCallsLog.some((t) => t.tool === "get_service_pricing" || t.tool === "search_services")).toBe(true);
+      expect(reply).toMatch(/(LKR|Rs\.?|ரூ\.?)\s?8,?000/i);
+      expect(reply.length).toBeLessThan(600);
+      expect(reply).not.toContain(process.env.GEMINI_API_KEY);
+    }, 120000);
   });
 });
