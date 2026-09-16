@@ -1,5 +1,8 @@
+"use client";
+
 import React from "react";
 import Image from "next/image";
+import { useBranding } from "./branding-provider";
 
 interface BrandHiveLogoProps {
   size?: number;
@@ -16,6 +19,9 @@ export function BrandHiveLogo({
   textClassName = "",
   subtext,
 }: BrandHiveLogoProps) {
+  const { logoUrl } = useBranding();
+  const activeLogo = logoUrl || "/brandhive-logo-master.png";
+
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       {/* Official BrandHive Logo Container */}
@@ -30,12 +36,13 @@ export function BrandHiveLogo({
         }}
       >
         <Image
-          src="/brandhive-logo-master.png"
+          src={activeLogo}
           alt="BrandHive Studio Logo"
           width={size - 8}
           height={size - 8}
           className="object-contain w-full h-full"
           priority
+          unoptimized={activeLogo.startsWith("data:")}
         />
       </div>
 

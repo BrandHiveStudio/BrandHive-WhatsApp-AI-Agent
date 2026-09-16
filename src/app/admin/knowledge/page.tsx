@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { supabase as supabaseAdmin } from "@/lib/supabase";
 import KnowledgeClient from "./knowledge-client";
 
 export const metadata = {
@@ -8,17 +9,17 @@ export const metadata = {
 };
 
 export default async function KnowledgePage() {
-  const supabase = await createSupabaseServerClient();
+  const authSupabase = await createSupabaseServerClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await authSupabase.auth.getUser();
 
   if (!user) {
     redirect("/login");
   }
 
   // Enforce staff profile authorization
-  const { data: profile } = await supabase
+  const { data: profile } = await authSupabase
     .from("profiles")
     .select("id, is_active")
     .eq("id", user.id)
@@ -28,29 +29,29 @@ export default async function KnowledgePage() {
     redirect("/login");
   }
 
-  // Fetch all authoritative knowledge data in parallel
+  // Fetch all authoritative knowledge data in parallel using service client
   const [
     { data: services },
     { data: addons },
     { data: faqs },
     { data: settings },
   ] = await Promise.all([
-    supabase
+    supabaseAdmin
       .from("services")
       .select("*")
       .eq("active", true)
       .order("display_order", { ascending: true }),
-    supabase
+    supabaseAdmin
       .from("service_addons")
       .select("*")
       .eq("active", true)
       .order("name", { ascending: true }),
-    supabase
+    supabaseAdmin
       .from("faqs")
       .select("*")
       .eq("active", true)
       .order("display_order", { ascending: true }),
-    supabase
+    supabaseAdmin
       .from("settings")
       .select("*")
       .eq("active", true)
