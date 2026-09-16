@@ -2,12 +2,47 @@ import { NextResponse } from "next/server";
 import { requireStaffUser } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 
+function parsePrice(val: unknown): number | null {
+  if (val === null || val === undefined || val === "") return null;
+  if (typeof val === "number") return isNaN(val) ? null : val;
+  if (typeof val === "string") {
+    const cleaned = val.replace(/[^0-9.-]+/g, "");
+    if (!cleaned) return null;
+    const num = Number(cleaned);
+    return isNaN(num) ? null : num;
+  }
+  return null;
+}
+
+function handleSupabaseError(operation: string, section: string, error: { message?: string; code?: string; details?: string | null; hint?: string | null }) {
+  console.error(`[api/admin/knowledge] Supabase error in ${operation} ${section}:`, {
+    message: error.message,
+    code: error.code,
+    details: error.details,
+    hint: error.hint,
+  });
+
+  const statusCode = error.code === "42501" ? 403 : 400;
+  const errorMsg = error.hint
+    ? `${error.message} (${error.hint})`
+    : error.message || "Database operation rejected";
+
+  return NextResponse.json(
+    {
+      error: errorMsg,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    },
+    { status: statusCode }
+  );
+}
+
 export async function GET() {
   const auth = await requireStaffUser();
   if ("error" in auth) return auth.error;
 
   try {
-    // Fetch all authoritative knowledge items (both active and inactive)
     const [
       { data: services, error: servicesErr },
       { data: addons, error: addonsErr },
@@ -32,10 +67,10 @@ export async function GET() {
         .order("key", { ascending: true }),
     ]);
 
-    if (servicesErr) throw servicesErr;
-    if (addonsErr) throw addonsErr;
-    if (faqsErr) throw faqsErr;
-    if (settingsErr) throw settingsErr;
+    if (servicesErr) return handleSupabaseError("GET", "services", servicesErr);
+    if (addonsErr) return handleSupabaseError("GET", "addons", addonsErr);
+    if (faqsErr) return handleSupabaseError("GET", "faqs", faqsErr);
+    if (settingsErr) return handleSupabaseError("GET", "settings", settingsErr);
 
     return NextResponse.json({
       services: services ?? [],
@@ -43,8 +78,9 @@ export async function GET() {
       faqs: faqs ?? [],
       settings: settings ?? [],
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
+  } catch (err: unknown) {
+    console.error("[api/admin/knowledge] Unexpected error in GET:", err);
+    const message = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -71,8 +107,21 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Service name is required." }, { status: 400 });
       }
       const slug = record.slug?.trim() || record.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const price = record.price !== undefined && record.price !== null && record.price !== "" ? Number(record.price) : null;
-      const starting_price = record.starting_price !== undefined && record.starting_price !== null && record.starting_price !== "" ? Number(record.starting_price) : null;
+      const pricing_type = ["fixed", "starting_from", "custom_quote"].includes(record.pricing_type) ? record.pricing_type : "fixed";
+      let price = parsePrice(record.price);
+      let starting_price = parsePrice(record.starting_price);
+
+      // Validate pricing consistency
+      if (pricing_type === "fixed" && price === null) {
+        price = starting_price ?? 0;
+      }
+      if (pricing_type === "starting_from" && starting_price === null) {
+        starting_price = price ?? 0;
+      }
+      if (pricing_type === "custom_quote") {
+        price = null;
+        starting_price = null;
+      }
 
       const payload = {
         name: record.name.trim(),
@@ -80,7 +129,7 @@ export async function POST(req: Request) {
         category: record.category?.trim() || "general",
         description: record.description?.trim() || null,
         item_type: record.item_type === "package" ? "package" : "service",
-        pricing_type: ["fixed", "starting_from", "custom_quote"].includes(record.pricing_type) ? record.pricing_type : "fixed",
+        pricing_type,
         price,
         starting_price,
         currency: record.currency?.trim() || "LKR",
@@ -93,23 +142,28 @@ export async function POST(req: Request) {
         updated_at: now,
       };
 
-      const { data, error } = await supabase.from("services").insert(payload).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("services").insert(payload).select();
+      if (error) return handleSupabaseError("POST", "services", error);
+      return NextResponse.json({ success: true, record: data?.[0] || payload });
     }
 
     if (section === "addons") {
       if (!record.name?.trim()) {
         return NextResponse.json({ error: "Add-on name is required." }, { status: 400 });
       }
-      const price = record.price !== undefined && record.price !== null && record.price !== "" ? Number(record.price) : null;
-      const starting_price = record.starting_price !== undefined && record.starting_price !== null && record.starting_price !== "" ? Number(record.starting_price) : null;
+      const pricing_type = ["fixed", "starting_from", "custom_quote"].includes(record.pricing_type) ? record.pricing_type : "fixed";
+      let price = parsePrice(record.price);
+      let starting_price = parsePrice(record.starting_price);
+
+      if (pricing_type === "fixed" && price === null) price = starting_price ?? 0;
+      if (pricing_type === "starting_from" && starting_price === null) starting_price = price ?? 0;
+      if (pricing_type === "custom_quote") { price = null; starting_price = null; }
 
       const payload = {
         name: record.name.trim(),
         service_id: record.service_id || null,
         description: record.description?.trim() || null,
-        pricing_type: ["fixed", "starting_from", "custom_quote"].includes(record.pricing_type) ? record.pricing_type : "fixed",
+        pricing_type,
         price,
         starting_price,
         currency: record.currency?.trim() || "LKR",
@@ -119,9 +173,9 @@ export async function POST(req: Request) {
         updated_at: now,
       };
 
-      const { data, error } = await supabase.from("service_addons").insert(payload).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("service_addons").insert(payload).select();
+      if (error) return handleSupabaseError("POST", "addons", error);
+      return NextResponse.json({ success: true, record: data?.[0] || payload });
     }
 
     if (section === "faqs") {
@@ -139,9 +193,9 @@ export async function POST(req: Request) {
         updated_at: now,
       };
 
-      const { data, error } = await supabase.from("faqs").insert(payload).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("faqs").insert(payload).select();
+      if (error) return handleSupabaseError("POST", "faqs", error);
+      return NextResponse.json({ success: true, record: data?.[0] || payload });
     }
 
     if (section === "settings") {
@@ -154,7 +208,7 @@ export async function POST(req: Request) {
         try {
           parsedValue = JSON.parse(parsedValue);
         } catch {
-          // Keep as string if not valid JSON object
+          // Keep as string
         }
       }
 
@@ -167,14 +221,15 @@ export async function POST(req: Request) {
         updated_at: now,
       };
 
-      const { data, error } = await supabase.from("settings").insert(payload).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("settings").insert(payload).select();
+      if (error) return handleSupabaseError("POST", "settings", error);
+      return NextResponse.json({ success: true, record: data?.[0] || payload });
     }
 
     return NextResponse.json({ error: `Unknown section: ${section}` }, { status: 400 });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
+  } catch (err: unknown) {
+    console.error("[api/admin/knowledge] Unexpected error in POST:", err);
+    const message = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -204,8 +259,8 @@ export async function PUT(req: Request) {
       if (record.description !== undefined) updates.description = record.description ? record.description.trim() : null;
       if (record.item_type !== undefined) updates.item_type = record.item_type === "package" ? "package" : "service";
       if (record.pricing_type !== undefined) updates.pricing_type = record.pricing_type;
-      if (record.price !== undefined) updates.price = record.price === null || record.price === "" ? null : Number(record.price);
-      if (record.starting_price !== undefined) updates.starting_price = record.starting_price === null || record.starting_price === "" ? null : Number(record.starting_price);
+      if (record.price !== undefined) updates.price = parsePrice(record.price);
+      if (record.starting_price !== undefined) updates.starting_price = parsePrice(record.starting_price);
       if (record.currency !== undefined) updates.currency = record.currency.trim();
       if (record.unit !== undefined) updates.unit = record.unit ? record.unit.trim() : null;
       if (record.active !== undefined) updates.active = !!record.active;
@@ -213,9 +268,21 @@ export async function PUT(req: Request) {
       if (record.ad_budget_separate !== undefined) updates.ad_budget_separate = !!record.ad_budget_separate;
       if (record.metadata !== undefined) updates.metadata = record.metadata;
 
-      const { data, error } = await supabase.from("services").update(updates).eq("id", id).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      // Ensure pricing consistency if pricing_type is being updated or set
+      if (updates.pricing_type === "fixed" && updates.price === null && updates.starting_price !== undefined) {
+        updates.price = updates.starting_price;
+      }
+      if (updates.pricing_type === "starting_from" && updates.starting_price === null && updates.price !== undefined) {
+        updates.starting_price = updates.price;
+      }
+      if (updates.pricing_type === "custom_quote") {
+        updates.price = null;
+        updates.starting_price = null;
+      }
+
+      const { data, error } = await supabase.from("services").update(updates).eq("id", id).select();
+      if (error) return handleSupabaseError("PUT", "services", error);
+      return NextResponse.json({ success: true, record: data?.[0] || { id, ...updates } });
     }
 
     if (section === "addons") {
@@ -224,15 +291,15 @@ export async function PUT(req: Request) {
       if (record.service_id !== undefined) updates.service_id = record.service_id || null;
       if (record.description !== undefined) updates.description = record.description ? record.description.trim() : null;
       if (record.pricing_type !== undefined) updates.pricing_type = record.pricing_type;
-      if (record.price !== undefined) updates.price = record.price === null || record.price === "" ? null : Number(record.price);
-      if (record.starting_price !== undefined) updates.starting_price = record.starting_price === null || record.starting_price === "" ? null : Number(record.starting_price);
+      if (record.price !== undefined) updates.price = parsePrice(record.price);
+      if (record.starting_price !== undefined) updates.starting_price = parsePrice(record.starting_price);
       if (record.currency !== undefined) updates.currency = record.currency.trim();
       if (record.unit !== undefined) updates.unit = record.unit ? record.unit.trim() : null;
       if (record.active !== undefined) updates.active = !!record.active;
 
-      const { data, error } = await supabase.from("service_addons").update(updates).eq("id", id).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("service_addons").update(updates).eq("id", id).select();
+      if (error) return handleSupabaseError("PUT", "addons", error);
+      return NextResponse.json({ success: true, record: data?.[0] || { id, ...updates } });
     }
 
     if (section === "faqs") {
@@ -243,9 +310,9 @@ export async function PUT(req: Request) {
       if (record.display_order !== undefined) updates.display_order = Number(record.display_order) || 50;
       if (record.active !== undefined) updates.active = !!record.active;
 
-      const { data, error } = await supabase.from("faqs").update(updates).eq("id", id).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("faqs").update(updates).eq("id", id).select();
+      if (error) return handleSupabaseError("PUT", "faqs", error);
+      return NextResponse.json({ success: true, record: data?.[0] || { id, ...updates } });
     }
 
     if (section === "settings") {
@@ -265,14 +332,15 @@ export async function PUT(req: Request) {
       if (record.description !== undefined) updates.description = record.description ? record.description.trim() : null;
       if (record.active !== undefined) updates.active = !!record.active;
 
-      const { data, error } = await supabase.from("settings").update(updates).eq("key", targetKey).select().single();
-      if (error) throw error;
-      return NextResponse.json({ success: true, record: data });
+      const { data, error } = await supabase.from("settings").update(updates).eq("key", targetKey).select();
+      if (error) return handleSupabaseError("PUT", "settings", error);
+      return NextResponse.json({ success: true, record: data?.[0] || { key: targetKey, ...updates } });
     }
 
     return NextResponse.json({ error: `Unknown section: ${section}` }, { status: 400 });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
+  } catch (err: unknown) {
+    console.error("[api/admin/knowledge] Unexpected error in PUT:", err);
+    const message = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -309,7 +377,7 @@ export async function DELETE(req: Request) {
 
     if (permanent) {
       const { error } = await supabase.from(tableName).delete().eq(idField, targetId);
-      if (error) throw error;
+      if (error) return handleSupabaseError("DELETE", section, error);
       return NextResponse.json({ success: true, deleted: true, permanent: true, id: targetId });
     } else {
       // Soft-delete / Archive (set active = false)
@@ -317,14 +385,14 @@ export async function DELETE(req: Request) {
         .from(tableName)
         .update({ active: false, updated_at: new Date().toISOString() })
         .eq(idField, targetId)
-        .select()
-        .single();
+        .select();
 
-      if (error) throw error;
-      return NextResponse.json({ success: true, archived: true, permanent: false, record: data });
+      if (error) return handleSupabaseError("DELETE", section, error);
+      return NextResponse.json({ success: true, archived: true, permanent: false, record: data?.[0] });
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
+  } catch (err: unknown) {
+    console.error("[api/admin/knowledge] Unexpected error in DELETE:", err);
+    const message = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

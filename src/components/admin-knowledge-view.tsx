@@ -293,11 +293,23 @@ export function AdminKnowledgeView({
       });
 
       if (!res.ok) {
-        throw new Error("Failed to update status on server");
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to update status on server");
       }
       showFeedback("success", `Updated ${section} status to ${newActive ? "Active" : "Inactive"}.`);
-    } catch {
-      showFeedback("error", "Error updating status. Please refresh.");
+    } catch (err: unknown) {
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "Error updating status.";
+      // Revert optimistic update
+      if (section === "services") {
+        setServices((prev) => prev.map((s) => (s.id === item.id ? { ...s, active: !newActive } : s)));
+      } else if (section === "addons") {
+        setAddons((prev) => prev.map((a) => (a.id === item.id ? { ...a, active: !newActive } : a)));
+      } else if (section === "faqs") {
+        setFaqs((prev) => prev.map((f) => (f.id === item.id ? { ...f, active: !newActive } : f)));
+      } else if (section === "settings") {
+        setSettings((prev) => prev.map((s) => (s.key === item.key ? { ...s, active: !newActive } : s)));
+      }
+      showFeedback("error", msg);
     }
   };
 
