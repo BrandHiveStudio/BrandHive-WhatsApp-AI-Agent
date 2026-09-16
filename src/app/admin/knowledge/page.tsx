@@ -39,22 +39,18 @@ export default async function KnowledgePage() {
     supabaseAdmin
       .from("services")
       .select("*")
-      .eq("active", true)
       .order("display_order", { ascending: true }),
     supabaseAdmin
       .from("service_addons")
       .select("*")
-      .eq("active", true)
       .order("name", { ascending: true }),
     supabaseAdmin
       .from("faqs")
       .select("*")
-      .eq("active", true)
       .order("display_order", { ascending: true }),
     supabaseAdmin
       .from("settings")
       .select("*")
-      .eq("active", true)
       .order("key", { ascending: true }),
   ]);
 

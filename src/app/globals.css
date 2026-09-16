@@ -31,33 +31,33 @@
 }
 
 html.dark {
-  --background: #0b0f10;
-  --foreground: #f0f2f5;
-  --app-bg: #0b0f10;
-  --nav-bg: #111719;
-  --panel-bg: #111719;
-  --panel-header: #182124;
-  --panel-border: #1e262b;
-  --panel-hover: #182124;
-  --panel-active: #222d32;
-  --text-primary: #f0f2f5;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --background: #000000;
+  --foreground: #f3f4f6;
+  --app-bg: #050505;
+  --nav-bg: #0d0d0d;
+  --panel-bg: #121212;
+  --panel-header: #171717;
+  --panel-border: #242424;
+  --panel-hover: #1c1c1c;
+  --panel-active: #262626;
+  --text-primary: #f3f4f6;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
   --brand-cyan: #00d2ff;
   --brand-cyan-hover: #38bdf8;
   --wa-green: #00a884;
   --wa-green-hover: #06cf9c;
-  --wa-green-badge: #132f2b;
+  --wa-green-badge: #1a2724;
   --wa-green-badge-text: #25d366;
-  --chat-bg: #0b0f10;
-  --bubble-in: #182124;
-  --bubble-in-text: #f0f2f5;
-  --bubble-in-border: #1e262b;
+  --chat-bg: #080808;
+  --bubble-in: #1a1a1a;
+  --bubble-in-text: #f3f4f6;
+  --bubble-in-border: #262626;
   --bubble-out: #005c4b;
-  --bubble-out-text: #f0f2f5;
-  --bubble-time: #8696a0;
-  --input-bg: #182124;
-  --search-bg: #182124;
+  --bubble-out-text: #f3f4f6;
+  --bubble-time: #8e8e93;
+  --input-bg: #181818;
+  --search-bg: #161616;
 }
 
 body {
@@ -77,9 +77,7 @@ body {
 
 html.dark .whatsapp-chat-wallpaper {
   background-color: var(--chat-bg);
-  background-image: radial-gradient(circle at 15% 15%, rgba(0, 168, 132, 0.04) 0%, transparent 40%),
-    radial-gradient(circle at 85% 85%, rgba(0, 168, 132, 0.03) 0%, transparent 40%),
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.01) 0%, transparent 60%);
+  background-image: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.015) 0%, transparent 70%);
 }
 
 /* Custom sleek scrollbar */

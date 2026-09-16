@@ -391,3 +391,15 @@ grant select on public.settings to service_role;
 grant select, insert, update on public.conversations to service_role;
 grant select, insert, update on public.messages to service_role;
 grant select on public.profiles to authenticated;
+
+-- =========================================================
+-- 17. Knowledge Base CMS table grants (Phase 4 Step 2)
+--     Enables Admin Knowledge Management CRUD operations
+--     (insert, update, delete) on the four authoritative
+--     knowledge tables via service_role server-side client.
+-- =========================================================
+grant select, insert, update, delete on public.services to service_role;
+grant select, insert, update, delete on public.service_addons to service_role;
+grant select, insert, update, delete on public.faqs to service_role;
+grant select, insert, update, delete on public.settings to service_role;
+
