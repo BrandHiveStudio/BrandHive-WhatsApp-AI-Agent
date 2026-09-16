@@ -1,43 +1,80 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import { BRANDHIVE_AGENT_SCRIPT, KNOWLEDGE_TOOL_RULES } from "@/lib/system-prompt";
+import { buildSystemPrompt } from "@/lib/system-prompt";
+import { getAIBehaviorConfig } from "@/lib/ai-behavior";
 import { getRequiredEnv } from "@/lib/env";
 import { KNOWLEDGE_TOOLS, executeToolCall } from "@/lib/ai-tools";
+import type { AIBehaviorConfig } from "@/lib/types";
 
-let _openai: OpenAI | null = null;
+let _geminiClient: OpenAI | null = null;
 
-// Lazy singleton (mirrors lib/supabase.ts) so a missing OPENROUTER_API_KEY
-// fails clearly on first real use, not at module import / build time.
-function getOpenAI(): OpenAI {
-  if (!_openai) {
-    _openai = new OpenAI({
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: getRequiredEnv("OPENROUTER_API_KEY"),
+// Lazy singleton for Google Gemini using Google's official OpenAI-compatible endpoint.
+// Fails clearly on first real use if GEMINI_API_KEY is missing, not at module import / build time.
+function getGeminiClient(): OpenAI {
+  if (!_geminiClient) {
+    _geminiClient = new OpenAI({
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+      apiKey: getRequiredEnv("GEMINI_API_KEY"),
     });
   }
-  return _openai;
+  return _geminiClient;
 }
 
 const FALLBACK_MESSAGE = "Sorry, I couldn't generate a response.";
-const MAX_TOOL_ITERATIONS = 4;
+const MAX_TOOL_ITERATIONS = 5;
+
+async function createCompletionWithRetry(
+  params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
+): Promise<OpenAI.Chat.ChatCompletion> {
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await getGeminiClient().chat.completions.create(params);
+    } catch (err: unknown) {
+      const isRateLimit =
+        err instanceof Error &&
+        (err.message.includes("429") || (err as { status?: number }).status === 429);
+      if (isRateLimit && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 3000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Failed to create completion");
+}
 
 export async function getAIResponse(
-  messages: { role: "user" | "assistant"; content: string }[]
+  messages: { role: "user" | "assistant"; content: string }[],
+  behaviorOverride?: Partial<AIBehaviorConfig>
 ) {
-  const model = process.env.AI_MODEL || "anthropic/claude-sonnet-4-20250514";
+  // Google Gemini API retired gemini-2.5-flash for new keys (HTTP 404: "This model models/gemini-2.5-flash
+  // is no longer available to new users. Please update your code to use models/gemini-3.6-flash").
+  // Automatically map retired gemini-2.5-flash to Google's active replacement gemini-3.6-flash.
+  const rawModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = rawModel === "gemini-2.5-flash" ? "gemini-3.6-flash" : rawModel;
+
+  const activeBehavior = behaviorOverride
+    ? { ...(await getAIBehaviorConfig()), ...behaviorOverride }
+    : await getAIBehaviorConfig();
+
+  const systemContent = buildSystemPrompt(activeBehavior);
 
   const conversation: ChatCompletionMessageParam[] = [
-    { role: "system", content: `${BRANDHIVE_AGENT_SCRIPT}\n\n${KNOWLEDGE_TOOL_RULES}` },
+    { role: "system", content: systemContent },
     ...messages,
   ];
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const completion = await getOpenAI().chat.completions.create({
+    const isFinalIteration = i === MAX_TOOL_ITERATIONS - 1;
+    const completion = await createCompletionWithRetry({
       model,
       messages: conversation,
-      tools: KNOWLEDGE_TOOLS,
-      tool_choice: "auto",
+      tools: isFinalIteration ? undefined : KNOWLEDGE_TOOLS,
+      tool_choice: isFinalIteration ? "none" : "auto",
     });
+
+
 
     const message = completion.choices[0]?.message;
     if (!message) return FALLBACK_MESSAGE;

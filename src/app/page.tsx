@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createBrowserSupabaseClient } from "@/lib/supabase-browser";
+
 import type { ConversationWithLastMessage, Message } from "@/lib/types";
 
 export default function Dashboard() {
@@ -34,12 +36,29 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    fetchConversations();
-  }, [fetchConversations]);
+    let active = true;
+    fetch("/api/conversations")
+      .then((res) => res.json())
+      .then((data) => {
+        if (active) setConversations(data);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
-    if (selectedId) fetchMessages(selectedId);
-  }, [selectedId, fetchMessages]);
+    if (!selectedId) return;
+    let active = true;
+    fetch(`/api/conversations/${selectedId}/messages`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (active) setMessages(data);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -203,7 +222,28 @@ export default function Dashboard() {
             );
           })}
         </div>
+
+        {/* Sidebar Admin Nav Footer */}
+        <div className="p-3 border-t border-white/[0.06] bg-[#111111] flex items-center justify-between text-[11px] text-white/50">
+          <Link
+            href="/admin/ai-behavior"
+            className="hover:text-emerald-400 flex items-center gap-1.5 transition-colors"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+            AI Behavior
+          </Link>
+          <Link
+            href="/admin/coexistence"
+            className="hover:text-white transition-colors"
+          >
+            Coexistence
+          </Link>
+        </div>
       </div>
+
 
       {/* Chat Panel */}
       <div className="flex-1 flex flex-col min-w-0">

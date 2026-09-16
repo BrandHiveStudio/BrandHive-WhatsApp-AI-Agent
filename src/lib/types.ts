@@ -81,3 +81,20 @@ export interface Setting {
   created_at: string;
   updated_at: string;
 }
+
+export interface AIBehaviorConfig {
+  tone: string;
+  friendliness: "low" | "medium" | "high" | string;
+  professionalism: "low" | "medium" | "high" | string;
+  creativity: "low" | "medium" | "high" | string;
+  response_length: "short" | "medium" | "detailed" | string;
+  emoji_usage: "none" | "minimal" | "moderate" | "expressive" | string;
+  greeting_style: string;
+  sales_approach: string;
+  question_frequency: string;
+  language_mirroring: boolean;
+  whatsapp_formatting: boolean;
+  human_escalation_behavior: string;
+  custom_instructions?: string;
+}
+

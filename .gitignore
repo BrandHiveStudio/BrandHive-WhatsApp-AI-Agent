@@ -46,3 +46,6 @@ next-env.d.ts
 
 # local secrets / MCP config (contains live API tokens - never commit)
 .mcp.json
+
+.vercel
+.env*

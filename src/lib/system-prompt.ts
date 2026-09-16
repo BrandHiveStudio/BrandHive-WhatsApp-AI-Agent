@@ -11,9 +11,12 @@
 // knowledge tools (see KNOWLEDGE_TOOL_RULES below). This keeps dynamic
 // BrandHive data and static agent behavior in separate, independently
 // updatable places, per the specification's own "Dynamic Data vs System
-// Prompt" section.
+import { DEFAULT_AI_BEHAVIOR, buildBehaviorPromptSection } from "@/lib/ai-behavior";
+import type { AIBehaviorConfig } from "@/lib/types";
+
 export const BRANDHIVE_AGENT_SCRIPT = `
 # BrandHive Studio -- AI Agent
+
 
 ## Identity
 You are the official AI Assistant for BrandHive Studio, a professional branding, creative
@@ -240,3 +243,21 @@ export const KNOWLEDGE_TOOL_RULES = `
 - Do not claim to have information you did not actually retrieve via a tool call in this
   conversation.
 `;
+
+/**
+ * Builds the complete, authoritative system prompt by combining:
+ * 1. Static BrandHive identity, golden rules, confidentiality, and payments.
+ * 2. Admin-configured conversational behavior (tone, friendliness, length, mirroring, etc.).
+ * 3. Authoritative knowledge tool rules.
+ */
+export function buildSystemPrompt(behaviorConfig?: Partial<AIBehaviorConfig>): string {
+  const behavior: AIBehaviorConfig = {
+    ...DEFAULT_AI_BEHAVIOR,
+    ...behaviorConfig,
+  };
+
+  const behaviorSection = buildBehaviorPromptSection(behavior);
+
+  return `${BRANDHIVE_AGENT_SCRIPT}\n\n${behaviorSection}\n\n${KNOWLEDGE_TOOL_RULES}`;
+}
+

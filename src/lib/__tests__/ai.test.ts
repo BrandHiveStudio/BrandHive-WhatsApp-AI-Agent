@@ -1,15 +1,20 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const createCompletion = vi.fn();
+const constructorSpy = vi.fn();
+
 
 vi.mock("openai", () => ({
   default: class MockOpenAI {
+    constructor(opts: unknown) {
+      constructorSpy(opts);
+    }
     chat = { completions: { create: createCompletion } };
   },
 }));
 
 vi.mock("@/lib/env", () => ({
-  getRequiredEnv: () => "test-key-not-real",
+  getRequiredEnv: (name: string) => `test-${name}-value`,
 }));
 
 const executeToolCall = vi.fn();
@@ -28,9 +33,31 @@ function messagesOf(callIndex: number): any[] {
 beforeEach(() => {
   createCompletion.mockReset();
   executeToolCall.mockReset();
+  constructorSpy.mockClear();
 });
 
 describe("getAIResponse orchestration", () => {
+  it("initializes OpenAI client targeting Google Gemini's OpenAI-compatible endpoint", async () => {
+    createCompletion.mockResolvedValueOnce({
+      choices: [{ message: { role: "assistant", content: "Hello! How can I help?" } }],
+    });
+    await getAIResponse([{ role: "user", content: "Hi" }]);
+    expect(constructorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        apiKey: "test-GEMINI_API_KEY-value",
+      })
+    );
+  });
+
+  it("resolves gemini-2.5-flash to Google's active gemini-3.6-flash model", async () => {
+    createCompletion.mockResolvedValueOnce({
+      choices: [{ message: { role: "assistant", content: "Hello!" } }],
+    });
+    await getAIResponse([{ role: "user", content: "Hi" }]);
+    expect(createCompletion.mock.calls[0][0].model).toBe("gemini-3.6-flash");
+  });
+
   it("returns the model's direct reply when no tool call is requested", async () => {
     createCompletion.mockResolvedValueOnce({
       choices: [{ message: { role: "assistant", content: "Hello! How can I help?" } }],
@@ -39,6 +66,7 @@ describe("getAIResponse orchestration", () => {
     expect(reply).toBe("Hello! How can I help?");
     expect(createCompletion).toHaveBeenCalledTimes(1);
   });
+
 
   it("sends the real BrandHive Agent Script as the system message, not the removed dental prompt", async () => {
     createCompletion.mockResolvedValueOnce({ choices: [{ message: { content: "ok" } }] });
@@ -137,9 +165,10 @@ describe("getAIResponse orchestration", () => {
     const reply = await getAIResponse([{ role: "user", content: "??" }]);
 
     expect(reply).toBe("Sorry, I couldn't generate a response.");
-    // MAX_TOOL_ITERATIONS = 4 in lib/ai.ts
-    expect(createCompletion).toHaveBeenCalledTimes(4);
+    // MAX_TOOL_ITERATIONS = 5 in lib/ai.ts
+    expect(createCompletion).toHaveBeenCalledTimes(5);
   });
+
 });
 
 describe("multilingual message passthrough", () => {
