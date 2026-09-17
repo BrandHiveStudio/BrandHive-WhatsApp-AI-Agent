@@ -1,5 +1,3 @@
-import { redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { supabase as supabaseAdmin } from "@/lib/supabase";
 import KnowledgeClient from "./knowledge-client";
 
@@ -9,26 +7,6 @@ export const metadata = {
 };
 
 export default async function KnowledgePage() {
-  const authSupabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await authSupabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  // Enforce staff profile authorization
-  const { data: profile } = await authSupabase
-    .from("profiles")
-    .select("id, is_active")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!profile || !profile.is_active) {
-    redirect("/login");
-  }
-
   // Fetch all authoritative knowledge data in parallel using service client
   const [
     { data: services },
@@ -60,7 +38,7 @@ export default async function KnowledgePage() {
       addons={addons ?? []}
       faqs={faqs ?? []}
       settings={settings ?? []}
-      userEmail={user.email || "staff@brandhive.io"}
+      userEmail="staff@brandhive.io"
     />
   );
 }

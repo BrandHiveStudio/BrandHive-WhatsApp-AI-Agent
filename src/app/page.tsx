@@ -23,7 +23,7 @@ export default function Dashboard() {
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMode, setFilterMode] = useState<"all" | "agent" | "human">("all");
-  const [userEmail, setUserEmail] = useState<string>("");
+  const [userEmail] = useState<string>("staff@brandhive.io");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,14 +43,6 @@ export default function Dashboard() {
       }
     }
   }, []);
-
-  // Fetch logged-in user email
-  useEffect(() => {
-    if (!supabase) return;
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user?.email) setUserEmail(user.email);
-    });
-  }, [supabase]);
 
   const fetchConversations = useCallback(async () => {
     try {
