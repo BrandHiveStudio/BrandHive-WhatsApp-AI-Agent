@@ -160,8 +160,22 @@ export function AdminNav({ userEmail, activeTab, onTabChange }: AdminNavProps) {
     }
   };
 
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      const res = await fetch("/api/auth/signout", { method: "POST" });
+      if (!res.ok) console.error("Signout error");
+    } catch (e) {
+      console.error("Signout error", e);
+    } finally {
+      window.location.href = "/login";
+    }
+  }
+
   return (
-    <aside className="w-16 md:w-[68px] flex-shrink-0 bg-[var(--nav-bg)] border-r border-[var(--panel-border)] flex flex-col items-center justify-between py-4 select-none z-30 transition-colors">
+    <aside className="hidden md:flex w-[56px] lg:w-[60px] flex-shrink-0 bg-[var(--nav-bg)] border-r border-[var(--panel-border)] flex-col items-center justify-between py-3 select-none z-30 transition-colors">
       {/* Top Section: Logo & Main Navigation */}
       <div className="flex flex-col items-center gap-6 w-full">
         {/* BrandHive Logo Header */}
@@ -206,10 +220,48 @@ export function AdminNav({ userEmail, activeTab, onTabChange }: AdminNavProps) {
         </nav>
       </div>
 
-      {/* Bottom Section: Theme Switcher Only (Sign Out permanently removed from Admin UI) */}
-      <div className="flex flex-col items-center gap-3 w-full px-2">
+      {/* Bottom Section: Theme Switcher & Sign Out */}
+      <div className="flex flex-col items-center gap-2.5 w-full px-2">
         {/* Light / Dark Mode Toggle */}
         <ThemeToggle className="w-11 h-11" />
+
+        {/* Sign Out Button */}
+        <button
+          onClick={handleSignOut}
+          disabled={signingOut}
+          title={userEmail ? `Sign out (${userEmail})` : "Sign out"}
+          className="w-11 h-11 rounded-xl flex items-center justify-center text-[var(--text-secondary)] hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer"
+          aria-label="Sign out"
+        >
+          {signingOut ? (
+            <svg
+              className="animate-spin text-red-500"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          ) : (
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          )}
+        </button>
       </div>
     </aside>
   );

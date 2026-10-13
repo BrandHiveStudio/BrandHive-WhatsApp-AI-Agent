@@ -4,11 +4,16 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { createBrowserSupabaseClient } from "@/lib/supabase-browser";
 import { AdminNav, type AdminTab } from "@/components/admin-nav";
 import { BrandHiveLogo } from "@/components/brandhive-logo";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { AdminKnowledgeView } from "@/components/admin-knowledge-view";
 import { AdminBehaviorView } from "@/components/admin-behavior-view";
 import { AdminCoexistenceView } from "@/components/admin-coexistence-view";
 import { AdminBrandingView } from "@/components/admin-branding-view";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import type { ConversationWithLastMessage, Message } from "@/lib/types";
+
+// Quick emoji shortcuts for WhatsApp composer
+const QUICK_EMOJIS = ["👋", "👍", "🙏", "😊", "🎉", "💼", "📞", "✨", "❤️", "🔥"];
 
 export default function Dashboard() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -22,13 +27,30 @@ export default function Dashboard() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterMode, setFilterMode] = useState<"all" | "agent" | "human">("all");
-  const [userEmail] = useState<string>("staff@brandhive.io");
+  const [filterMode, setFilterMode] = useState<"all" | "unread" | "agent" | "human">("all");
+  const [userEmail, setUserEmail] = useState<string>("staff@brandhive.io");
+
+  // Track unread conversations from incoming realtime messages
+  const [unreadConvos, setUnreadConvos] = useState<Set<string>>(new Set());
+
+  // UI state for dropdown menus & quick emoji tray
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [copiedPhoneToast, setCopiedPhoneToast] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = conversations.find((c) => c.id === selectedId);
+
+  // Fetch logged-in user email
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user?.email) setUserEmail(user.email);
+    });
+  }, [supabase]);
 
   // Sync tab state from URL params if present
   useEffect(() => {
@@ -42,6 +64,17 @@ export default function Dashboard() {
         setActiveTab(tabParam);
       }
     }
+  }, []);
+
+  // Handle hardware / browser back button on mobile to return to conversation list
+  useEffect(() => {
+    const handlePopState = () => {
+      setSelectedId(null);
+      setChatMenuOpen(false);
+      setMobileMenuOpen(false);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   const fetchConversations = useCallback(async () => {
@@ -68,6 +101,7 @@ export default function Dashboard() {
     }
   }, []);
 
+  // Initial load of conversations
   useEffect(() => {
     let active = true;
     fetch("/api/conversations")
@@ -80,6 +114,7 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Fetch messages when conversation changes
   useEffect(() => {
     if (!selectedId) return;
     let active = true;
@@ -93,14 +128,15 @@ export default function Dashboard() {
     };
   }, [selectedId]);
 
+  // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Focus input when conversation changes
+  // Focus input when conversation is opened
   useEffect(() => {
     if (selectedId && activeTab === "chats") {
-      setTimeout(() => inputRef.current?.focus(), 50);
+      setTimeout(() => inputRef.current?.focus(), 80);
     }
   }, [selectedId, activeTab]);
 
@@ -119,6 +155,9 @@ export default function Dashboard() {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
               return [...prev, newMsg];
             });
+          } else if (newMsg.role === "user") {
+            // Incoming message to an unselected conversation: mark as unread
+            setUnreadConvos((prev) => new Set(prev).add(newMsg.conversation_id));
           }
           fetchConversations();
         }
@@ -135,6 +174,30 @@ export default function Dashboard() {
     };
   }, [selectedId, fetchConversations, supabase]);
 
+  // Select conversation handler with mobile history integration
+  const handleSelectConversation = (id: string) => {
+    setSelectedId(id);
+    setUnreadConvos((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setChatMenuOpen(false);
+    if (typeof window !== "undefined") {
+      window.history.pushState({ selectedId: id }, "");
+    }
+  };
+
+  // Back to conversation list
+  const handleBackToList = () => {
+    setSelectedId(null);
+    setChatMenuOpen(false);
+    if (typeof window !== "undefined" && window.history.state?.selectedId) {
+      window.history.back();
+    }
+  };
+
   async function toggleMode() {
     if (!selected) return;
     const newMode = selected.mode === "agent" ? "human" : "agent";
@@ -150,21 +213,37 @@ export default function Dashboard() {
 
   async function handleSend() {
     if (!input.trim() || !selectedId || sending) return;
+    const textToSend = input.trim();
     setSending(true);
     try {
       await fetch(`/api/conversations/${selectedId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input.trim() }),
+        body: JSON.stringify({ message: textToSend }),
       });
       setInput("");
+      setShowEmojiPicker(false);
       fetchMessages(selectedId);
     } finally {
       setSending(false);
     }
   }
 
-  function formatTime(dateStr: string) {
+  function handleInsertEmoji(emoji: string) {
+    setInput((prev) => prev + emoji);
+    inputRef.current?.focus();
+  }
+
+  function handleCopyPhone(phone: string) {
+    if (navigator?.clipboard) {
+      navigator.clipboard.writeText(phone);
+      setCopiedPhoneToast(true);
+      setTimeout(() => setCopiedPhoneToast(false), 2000);
+    }
+  }
+
+  // Format timestamp for conversation list (WhatsApp Web style)
+  function formatListTime(dateStr: string) {
     if (!dateStr) return "";
     const date = new Date(dateStr);
     const now = new Date();
@@ -176,7 +255,58 @@ export default function Dashboard() {
     if (isToday) {
       return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
-    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      date.getDate() === yesterday.getDate() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getFullYear() === yesterday.getFullYear();
+
+    if (isYesterday) return "Yesterday";
+
+    // Within last 6 days: show day of week
+    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 7) {
+      return date.toLocaleDateString([], { weekday: "short" });
+    }
+
+    return date.toLocaleDateString([], { month: "numeric", day: "numeric", year: "2-digit" });
+  }
+
+  // Format timestamp for message bubbles
+  function formatBubbleTime(dateStr: string) {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // Format date divider for chat messages
+  function formatDateDivider(dateStr: string) {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    const now = new Date();
+    if (
+      date.getDate() === now.getDate() &&
+      date.getMonth() === now.getMonth() &&
+      date.getFullYear() === now.getFullYear()
+    ) {
+      return "TODAY";
+    }
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    if (
+      date.getDate() === yesterday.getDate() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getFullYear() === yesterday.getFullYear()
+    ) {
+      return "YESTERDAY";
+    }
+    return date.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }).toUpperCase();
   }
 
   function getInitials(name: string | null, phone: string) {
@@ -188,6 +318,20 @@ export default function Dashboard() {
     return phone.slice(-2);
   }
 
+  // Deterministic avatar gradient
+  function getAvatarGradient(phone: string) {
+    const gradients = [
+      "from-emerald-600 to-teal-800",
+      "from-cyan-600 to-blue-800",
+      "from-indigo-600 to-violet-800",
+      "from-teal-600 to-emerald-800",
+      "from-amber-600 to-orange-800",
+    ];
+    let sum = 0;
+    for (let i = 0; i < phone.length; i++) sum += phone.charCodeAt(i);
+    return gradients[sum % gradients.length];
+  }
+
   // Filtered Conversations
   const filteredConversations = useMemo(() => {
     return conversations.filter((c) => {
@@ -196,34 +340,80 @@ export default function Dashboard() {
         (c.name && c.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         c.phone.includes(searchQuery.trim());
 
-      const matchesMode = filterMode === "all" || c.mode === filterMode;
+      let matchesFilter = true;
+      if (filterMode === "unread") {
+        matchesFilter = unreadConvos.has(c.id);
+      } else if (filterMode === "agent") {
+        matchesFilter = c.mode === "agent";
+      } else if (filterMode === "human") {
+        matchesFilter = c.mode === "human";
+      }
 
-      return matchesSearch && matchesMode;
+      return matchesSearch && matchesFilter;
     });
-  }, [conversations, searchQuery, filterMode]);
+  }, [conversations, searchQuery, filterMode, unreadConvos]);
 
   return (
     <div className="flex h-screen w-full bg-[var(--app-bg)] text-[var(--text-primary)] font-sans overflow-hidden">
-      {/* Primary WhatsApp Navigation Rail */}
+      {/* Primary WhatsApp Left Navigation Rail (Desktop) */}
       <AdminNav
         userEmail={userEmail}
         activeTab={activeTab}
-        onTabChange={(tab) => setActiveTab(tab)}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setMobileMenuOpen(false);
+        }}
       />
 
       {/* View Switcher: Seamless 0ms Navigation */}
       {activeTab === "knowledge" ? (
-        <AdminKnowledgeView />
+        <main className="flex-1 flex flex-col min-w-0 bg-[var(--panel-bg)] overflow-hidden">
+          {/* Back to Chats Header */}
+          <div className="px-4 md:px-6 py-2.5 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
+            <button
+              onClick={() => {
+                setActiveTab("chats");
+                window.history.pushState(null, "", "/");
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--wa-green)] bg-[var(--panel-bg)] border border-[var(--panel-border)] hover:bg-[var(--panel-active)] transition-all cursor-pointer shadow-2xs"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+              <span>Back to WhatsApp Inbox</span>
+            </button>
+            <span className="text-xs font-semibold text-[var(--text-secondary)]">
+              AI Knowledge Catalog
+            </span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <AdminKnowledgeView />
+          </div>
+        </main>
       ) : activeTab === "behavior" ? (
         <main className="flex-1 flex flex-col min-w-0 bg-[var(--panel-bg)] overflow-hidden">
-          <header className="px-6 py-4 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
-            <div>
-              <h1 className="text-base font-semibold text-[var(--text-primary)] leading-tight">
-                AI Conversation Behavior
-              </h1>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                Configure tone, friendliness, pacing, and personality.
-              </p>
+          <header className="px-4 md:px-6 py-3 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setActiveTab("chats");
+                  window.history.pushState(null, "", "/");
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--wa-green)] bg-[var(--panel-bg)] border border-[var(--panel-border)] hover:bg-[var(--panel-active)] transition-all cursor-pointer shadow-2xs"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+                <span>Back to Chats</span>
+              </button>
+              <div>
+                <h1 className="text-base font-semibold text-[var(--text-primary)] leading-tight">
+                  AI Conversation Behavior
+                </h1>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Configure tone, friendliness, pacing, and personality.
+                </p>
+              </div>
             </div>
           </header>
           <div className="flex-1 overflow-y-auto px-6 py-8">
@@ -232,14 +422,28 @@ export default function Dashboard() {
         </main>
       ) : activeTab === "coexistence" ? (
         <main className="flex-1 flex flex-col min-w-0 bg-[var(--panel-bg)] overflow-hidden">
-          <header className="px-6 py-4 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
-            <div>
-              <h1 className="text-base font-semibold text-[var(--text-primary)] leading-tight">
-                WhatsApp Business App Coexistence
-              </h1>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                Meta Embedded Signup & Cloud API onboarding portal.
-              </p>
+          <header className="px-4 md:px-6 py-3 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setActiveTab("chats");
+                  window.history.pushState(null, "", "/");
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--wa-green)] bg-[var(--panel-bg)] border border-[var(--panel-border)] hover:bg-[var(--panel-active)] transition-all cursor-pointer shadow-2xs"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+                <span>Back to Chats</span>
+              </button>
+              <div>
+                <h1 className="text-base font-semibold text-[var(--text-primary)] leading-tight">
+                  WhatsApp Business App Coexistence
+                </h1>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Meta Embedded Signup & Cloud API onboarding portal.
+                </p>
+              </div>
             </div>
           </header>
           <div className="flex-1 overflow-y-auto px-6 py-8">
@@ -248,14 +452,28 @@ export default function Dashboard() {
         </main>
       ) : activeTab === "branding" ? (
         <main className="flex-1 flex flex-col min-w-0 bg-[var(--panel-bg)] overflow-hidden">
-          <header className="px-6 py-4 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
-            <div>
-              <h1 className="text-base font-semibold text-[var(--text-primary)] leading-tight">
-                Logo & Branding Settings
-              </h1>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                Customize the active logo displayed throughout the WhatsApp AI Agent Admin portal.
-              </p>
+          <header className="px-4 md:px-6 py-3 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setActiveTab("chats");
+                  window.history.pushState(null, "", "/");
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--wa-green)] bg-[var(--panel-bg)] border border-[var(--panel-border)] hover:bg-[var(--panel-active)] transition-all cursor-pointer shadow-2xs"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+                <span>Back to Chats</span>
+              </button>
+              <div>
+                <h1 className="text-base font-semibold text-[var(--text-primary)] leading-tight">
+                  Logo & Branding Settings
+                </h1>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Customize the active logo displayed throughout the WhatsApp AI Agent Admin portal.
+                </p>
+              </div>
             </div>
           </header>
           <div className="flex-1 overflow-y-auto p-6">
@@ -263,42 +481,125 @@ export default function Dashboard() {
           </div>
         </main>
       ) : (
-        /* Chats View (WhatsApp Inbox) */
-        <div className="flex-1 flex min-w-0 h-full overflow-hidden">
+        /* Chats View (WhatsApp Web-Inspired Dual-Pane Layout) */
+        <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
+          {/* Toast Notification */}
+          {copiedPhoneToast && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-[var(--panel-active)] text-xs font-semibold border border-[var(--panel-border)] shadow-md flex items-center gap-2">
+              <span className="text-[var(--wa-green)]">✓</span>
+              <span>Phone number copied to clipboard</span>
+            </div>
+          )}
+
           {/* Conversation List Sidebar */}
           <aside
-            className={`w-full md:w-[360px] lg:w-[400px] flex-shrink-0 flex flex-col border-r border-[var(--panel-border)] bg-[var(--panel-bg)] ${
+            className={`w-full md:w-[380px] lg:w-[420px] flex-shrink-0 flex flex-col border-r border-[var(--panel-border)] bg-[var(--panel-bg)] transition-all ${
               selectedId ? "hidden md:flex" : "flex"
             }`}
           >
-            {/* Sidebar Header */}
-            <div className="px-4 py-3 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between">
+            {/* Sidebar Top Header (WhatsApp Web authentic 60px header) */}
+            <div className="h-[60px] px-4 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-3">
-                <BrandHiveLogo size={36} showText={true} subtext={`${conversations.length} chats`} />
+                <BrandHiveLogo size={36} showText={true} subtext="WhatsApp Agent" />
               </div>
 
-              {/* Quick Switch to Knowledge */}
-              <button
-                onClick={() => setActiveTab("knowledge")}
-                className="px-2.5 py-1 text-xs rounded-lg font-medium bg-[var(--panel-active)] text-[var(--wa-green)] hover:opacity-85 transition-all flex items-center gap-1.5 cursor-pointer"
-                title="View authoritative AI Knowledge Catalog"
-              >
-                <span>AI Catalog</span>
-              </button>
+              {/* Action Icons */}
+              <div className="flex items-center gap-1 text-[var(--text-secondary)]">
+                {/* AI Catalog Shortcut */}
+                <button
+                  onClick={() => setActiveTab("knowledge")}
+                  className="px-2.5 py-1 text-xs rounded-lg font-medium bg-[var(--panel-active)] text-[var(--wa-green)] hover:opacity-85 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="View authoritative AI Knowledge Catalog"
+                >
+                  <span>AI Catalog</span>
+                </button>
+
+                {/* Mobile Overflow Menu Button (WhatsApp Android 3 dots) */}
+                <div className="relative">
+                  <button
+                    onClick={() => setMobileMenuOpen((prev) => !prev)}
+                    className="p-2 rounded-full hover:bg-[var(--panel-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                    aria-label="Menu"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="5" r="2" />
+                      <circle cx="12" cy="12" r="2" />
+                      <circle cx="12" cy="19" r="2" />
+                    </svg>
+                  </button>
+
+                  {/* Dropdown Menu */}
+                  {mobileMenuOpen && (
+                    <div className="absolute right-0 top-11 w-52 bg-[var(--panel-bg)] border border-[var(--panel-border)] rounded-xl shadow-xl py-1.5 z-50 text-xs text-[var(--text-primary)]">
+                      <button
+                        onClick={() => {
+                          setActiveTab("knowledge");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                      >
+                        <span>📚</span> AI Knowledge Catalog
+                      </button>
+                      <button
+                        onClick={() => {
+                          setActiveTab("behavior");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                      >
+                        <span>⚙️</span> AI Behavior & Tone
+                      </button>
+                      <button
+                        onClick={() => {
+                          setActiveTab("coexistence");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                      >
+                        <span>📱</span> WhatsApp Coexistence
+                      </button>
+                      <button
+                        onClick={() => {
+                          setActiveTab("branding");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                      >
+                        <span>🎨</span> BrandHive Logo Settings
+                      </button>
+                      <div className="my-1 border-t border-[var(--panel-border)]" />
+                      <div className="px-4 py-2 flex items-center justify-between text-[var(--text-secondary)]">
+                        <span>Theme</span>
+                        <ThemeToggle />
+                      </div>
+                      <div className="my-1 border-t border-[var(--panel-border)]" />
+                      <button
+                        onClick={async () => {
+                          await fetch("/api/auth/signout", { method: "POST" });
+                          window.location.href = "/login";
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-red-500/10 text-red-500 flex items-center gap-2 cursor-pointer font-medium"
+                      >
+                        <span>🚪</span> Sign Out
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Search & Filter Bar */}
-            <div className="p-3 border-b border-[var(--panel-border)] bg-[var(--panel-bg)] space-y-2">
+            <div className="p-2.5 border-b border-[var(--panel-border)] bg-[var(--panel-bg)] space-y-2">
               <div className="relative">
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search name or phone..."
-                  className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-[var(--search-bg)] text-[var(--text-primary)] placeholder-[var(--text-muted)] border border-[var(--panel-border)] focus:outline-none focus:border-[var(--brand-cyan)] transition-colors"
+                  placeholder="Search or start new chat"
+                  className="w-full pl-9 pr-8 py-1.5 text-xs rounded-lg bg-[var(--search-bg)] text-[var(--text-primary)] placeholder-[var(--text-muted)] border border-transparent focus:border-[var(--brand-cyan)] focus:outline-none transition-colors"
                 />
                 <svg
-                  className="absolute left-3 top-2.5 text-[var(--text-muted)]"
+                  className="absolute left-3 top-2 text-[var(--text-muted)]"
                   width="14"
                   height="14"
                   viewBox="0 0 24 24"
@@ -312,7 +613,7 @@ export default function Dashboard() {
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery("")}
-                    className="absolute right-3 top-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs cursor-pointer"
+                    className="absolute right-2.5 top-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs cursor-pointer"
                   >
                     ✕
                   </button>
@@ -320,10 +621,10 @@ export default function Dashboard() {
               </div>
 
               {/* Filter Pills */}
-              <div className="flex items-center gap-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5 text-[11px] overflow-x-auto pb-0.5 no-scrollbar">
                 <button
                   onClick={() => setFilterMode("all")}
-                  className={`px-2.5 py-0.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  className={`px-3 py-1 rounded-full font-medium transition-colors cursor-pointer flex-shrink-0 ${
                     filterMode === "all"
                       ? "bg-[var(--wa-green)] text-white"
                       : "bg-[var(--search-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -332,8 +633,29 @@ export default function Dashboard() {
                   All
                 </button>
                 <button
+                  onClick={() => setFilterMode("unread")}
+                  className={`px-3 py-1 rounded-full font-medium transition-colors cursor-pointer flex-shrink-0 flex items-center gap-1 ${
+                    filterMode === "unread"
+                      ? "bg-[var(--wa-green)] text-white"
+                      : "bg-[var(--search-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <span>Unread</span>
+                  {unreadConvos.size > 0 && (
+                    <span
+                      className={`text-[9px] px-1.5 py-0.2 rounded-full ${
+                        filterMode === "unread"
+                          ? "bg-white text-[var(--wa-green)] font-bold"
+                          : "bg-[var(--unread-badge)] text-white"
+                      }`}
+                    >
+                      {unreadConvos.size}
+                    </span>
+                  )}
+                </button>
+                <button
                   onClick={() => setFilterMode("agent")}
-                  className={`px-2.5 py-0.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  className={`px-3 py-1 rounded-full font-medium transition-colors cursor-pointer flex-shrink-0 ${
                     filterMode === "agent"
                       ? "bg-[var(--wa-green)] text-white"
                       : "bg-[var(--search-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -343,96 +665,136 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => setFilterMode("human")}
-                  className={`px-2.5 py-0.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  className={`px-3 py-1 rounded-full font-medium transition-colors cursor-pointer flex-shrink-0 ${
                     filterMode === "human"
                       ? "bg-amber-600 text-white"
                       : "bg-[var(--search-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                   }`}
                 >
-                  👤 Human
+                  👤 Human Takeover
                 </button>
               </div>
             </div>
 
-            {/* Conversations Scroll Area */}
+            {/* Conversation List Rows */}
             <div className="flex-1 overflow-y-auto divide-y divide-[var(--panel-border)]/50">
               {filteredConversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-56 px-4 text-center">
-                  <div className="w-12 h-12 rounded-full bg-[var(--search-bg)] flex items-center justify-center text-[var(--text-muted)] mb-2">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <div className="flex flex-col items-center justify-center h-64 px-6 text-center">
+                  <div className="w-12 h-12 rounded-full bg-[var(--search-bg)] flex items-center justify-center text-[var(--text-muted)] mb-3">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
                   </div>
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">No conversations found</p>
-                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                    Incoming WhatsApp messages will appear here in real-time.
+                  <p className="text-xs font-semibold text-[var(--text-primary)]">No chats found</p>
+                  <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                    {searchQuery
+                      ? "Try searching for a different name or phone number."
+                      : "Customer messages received on WhatsApp will appear here."}
                   </p>
                 </div>
               ) : (
                 filteredConversations.map((convo) => {
                   const isSelected = selectedId === convo.id;
+                  const isUnread = unreadConvos.has(convo.id);
+
                   return (
                     <button
                       key={convo.id}
-                      onClick={() => setSelectedId(convo.id)}
-                      className={`w-full text-left px-3.5 py-3 transition-colors relative flex items-center gap-3 group cursor-pointer ${
+                      onClick={() => handleSelectConversation(convo.id)}
+                      className={`w-full text-left px-3.5 py-3 transition-colors relative flex items-center gap-3.5 cursor-pointer ${
                         isSelected
                           ? "bg-[var(--panel-active)]"
                           : "hover:bg-[var(--panel-hover)]"
                       }`}
                     >
-                      {/* Active Bar Indicator */}
-                      {isSelected && (
-                        <span className="absolute left-0 top-0 bottom-0 w-1 bg-[var(--wa-green)]" />
-                      )}
-
                       {/* Avatar */}
                       <div className="relative flex-shrink-0">
-                        <div className="w-11 h-11 rounded-full bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center text-white text-xs font-semibold shadow-xs">
+                        <div
+                          className={`w-12 h-12 rounded-full bg-gradient-to-br ${getAvatarGradient(
+                            convo.phone
+                          )} flex items-center justify-center text-white text-sm font-semibold shadow-2xs`}
+                        >
                           {getInitials(convo.name, convo.phone)}
                         </div>
+
+                        {/* Mode Indicator Mini-badge */}
                         {convo.mode === "agent" ? (
                           <span
-                            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--panel-bg)] flex items-center justify-center text-[10px]"
-                            title="AI Agent Active"
+                            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--panel-bg)] flex items-center justify-center text-[10px] shadow-xs"
+                            title="AI Auto-Reply Active"
                           >
                             🤖
                           </span>
                         ) : (
                           <span
-                            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--panel-bg)] flex items-center justify-center text-[10px]"
-                            title="Human Mode Active"
+                            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--panel-bg)] flex items-center justify-center text-[10px] shadow-xs"
+                            title="Human Takeover Active"
                           >
                             👤
                           </span>
                         )}
                       </div>
 
-                      {/* Conversation Meta & Preview */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1 mb-0.5">
-                          <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                      {/* Content */}
+                      <div className="flex-1 min-w-0 pr-1">
+                        {/* Top Line: Name and Time */}
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span
+                            className={`text-[15px] truncate leading-tight ${
+                              isUnread
+                                ? "font-bold text-[var(--text-primary)]"
+                                : "font-medium text-[var(--text-primary)]"
+                            }`}
+                          >
                             {convo.name || convo.phone}
                           </span>
-                          <span className="text-[10px] text-[var(--text-muted)] flex-shrink-0">
-                            {formatTime(convo.updated_at)}
+                          <span
+                            className={`text-[11px] flex-shrink-0 ${
+                              isUnread
+                                ? "text-[var(--wa-green)] font-semibold"
+                                : "text-[var(--text-muted)]"
+                            }`}
+                          >
+                            {formatListTime(convo.updated_at)}
                           </span>
                         </div>
 
+                        {/* Bottom Line: Preview and Status */}
                         <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs text-[var(--text-secondary)] truncate flex-1">
-                            {convo.last_message || <span className="italic text-[var(--text-muted)]">No messages yet</span>}
-                          </p>
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
+                            {/* Checkmark icon if last message was assistant */}
+                            {convo.last_message && (
+                              <span className="text-[var(--ticks-read)] text-xs flex-shrink-0" title="Delivered">
+                                ✓✓
+                              </span>
+                            )}
+                            <p
+                              className={`text-[13px] truncate ${
+                                isUnread
+                                  ? "text-[var(--text-primary)] font-semibold"
+                                  : "text-[var(--text-secondary)]"
+                              }`}
+                            >
+                              {convo.last_message || (
+                                <span className="italic text-[var(--text-muted)]">No messages yet</span>
+                              )}
+                            </p>
+                          </div>
 
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-medium uppercase tracking-wider flex-shrink-0 ${
-                              convo.mode === "agent"
-                                ? "bg-[var(--wa-green-badge)] text-[var(--wa-green-badge-text)]"
-                                : "bg-amber-500/15 text-amber-500"
-                            }`}
-                          >
-                            {convo.mode === "agent" ? "AI" : "You"}
-                          </span>
+                          {/* Unread dot or Mode Badge */}
+                          {isUnread ? (
+                            <span className="w-2.5 h-2.5 rounded-full bg-[var(--unread-badge)] flex-shrink-0" />
+                          ) : (
+                            <span
+                              className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-medium uppercase tracking-wider flex-shrink-0 ${
+                                convo.mode === "agent"
+                                  ? "bg-[var(--wa-green-badge)] text-[var(--wa-green-badge-text)]"
+                                  : "bg-amber-500/15 text-amber-500"
+                              }`}
+                            >
+                              {convo.mode === "agent" ? "AI" : "Staff"}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </button>
@@ -442,75 +804,95 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* Chat Panel Canvas */}
+          {/* Active Chat Panel Canvas */}
           <main
             className={`flex-1 flex flex-col min-w-0 h-full bg-[var(--chat-bg)] ${
               !selectedId ? "hidden md:flex" : "flex"
             }`}
           >
             {!selected ? (
-              /* Empty State */
-              <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center select-none whatsapp-chat-wallpaper">
-                <div className="p-4 rounded-2xl bg-[var(--panel-bg)] border border-[var(--panel-border)] shadow-md">
-                  <BrandHiveLogo size={64} />
-                </div>
-                <div className="max-w-sm">
-                  <h2 className="text-base font-semibold text-[var(--text-primary)]">
-                    BrandHive WhatsApp Business Inbox
+              /* WhatsApp Web Desktop Empty Hero */
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none whatsapp-chat-wallpaper">
+                <div className="max-w-md flex flex-col items-center">
+                  <div className="w-20 h-20 rounded-full bg-[var(--panel-bg)] border border-[var(--panel-border)] shadow-md flex items-center justify-center mb-6">
+                    <BrandHiveLogo size={48} />
+                  </div>
+                  <h2 className="text-xl font-normal text-[var(--text-primary)] tracking-tight">
+                    BrandHive Studio for WhatsApp
                   </h2>
-                  <p className="text-xs text-[var(--text-secondary)] mt-1.5 leading-relaxed">
-                    Select a conversation from the sidebar to view chat history, monitor Gemini AI auto-replies, or take over in Human mode.
+                  <p className="text-xs text-[var(--text-secondary)] mt-3 leading-relaxed max-w-sm">
+                    Send and receive WhatsApp customer messages in real-time. Gemini AI automatically answers inquiries, explains services, and provides official pricing.
                   </p>
+                  <div className="mt-8 pt-6 border-t border-[var(--panel-border)]/60 flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    <span>End-to-end encrypted with WhatsApp Cloud API</span>
+                  </div>
                 </div>
               </div>
             ) : (
-              /* Active Chat View */
+              /* Active Chat Conversation */
               <div className="flex-1 flex flex-col min-w-0 h-full">
-                {/* Chat Header */}
-                <header className="px-5 py-3 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0 z-10 shadow-xs">
-                  <div className="flex items-center gap-3">
-                    {/* Mobile Back Button */}
+                {/* Header: WhatsApp Web 60px header */}
+                <header className="h-[60px] px-4 border-b border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center justify-between flex-shrink-0 z-10">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Mobile Back Button (Android-inspired back arrow) */}
                     <button
-                      onClick={() => setSelectedId(null)}
-                      className="md:hidden p-1.5 -ml-2 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                      aria-label="Back to conversations"
+                      onClick={handleBackToList}
+                      className="md:hidden p-1.5 -ml-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-full hover:bg-[var(--panel-hover)] cursor-pointer"
+                      aria-label="Back to chat list"
                     >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <path d="m15 18-6-6 6-6" />
                       </svg>
                     </button>
 
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center text-white text-xs font-semibold shadow-xs flex-shrink-0">
+                    {/* Avatar */}
+                    <div
+                      className={`w-10 h-10 rounded-full bg-gradient-to-br ${getAvatarGradient(
+                        selected.phone
+                      )} flex items-center justify-center text-white text-xs font-semibold shadow-2xs flex-shrink-0`}
+                    >
                       {getInitials(selected.name, selected.phone)}
                     </div>
 
+                    {/* Contact Info */}
                     <div className="min-w-0">
-                      <h2 className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                      <h2 className="text-[15px] font-medium text-[var(--text-primary)] truncate leading-tight">
                         {selected.name || selected.phone}
                       </h2>
-                      <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]">
+                      <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)] truncate">
                         <span>{selected.phone}</span>
                         <span>•</span>
-                        <span className="text-[var(--wa-green)] font-medium">
-                          {selected.mode === "agent" ? "AI Enabled" : "Human Control"}
+                        <span
+                          className={`font-medium ${
+                            selected.mode === "agent"
+                              ? "text-[var(--wa-green)]"
+                              : "text-amber-500"
+                          }`}
+                        >
+                          {selected.mode === "agent" ? "🤖 AI Auto-Reply" : "👤 Human Takeover"}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* AI / Human Mode Switcher */}
+                  {/* Header Actions */}
                   <div className="flex items-center gap-2">
+                    {/* AI / Human Mode Toggle Pill */}
                     <button
                       onClick={toggleMode}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 border shadow-xs cursor-pointer ${
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 border cursor-pointer shadow-2xs ${
                         selected.mode === "agent"
                           ? "bg-[var(--wa-green-badge)] text-[var(--wa-green-badge-text)] border-[var(--wa-green)]/30 hover:opacity-90"
                           : "bg-amber-500/15 text-amber-500 border-amber-500/30 hover:bg-amber-500/25"
                       }`}
                       title={
                         selected.mode === "agent"
-                          ? "AI Mode: Gemini auto-replies to incoming messages. Click to switch to Human mode."
-                          : "Human Mode: AI replies are paused. Click to hand back to AI."
+                          ? "AI Auto-Reply active: Gemini answers incoming messages. Click to take over."
+                          : "Human Takeover active: AI replies paused. Click to hand back to AI."
                       }
                     >
                       <span
@@ -520,17 +902,98 @@ export default function Dashboard() {
                             : "bg-amber-500"
                         }`}
                       />
-                      <span>{selected.mode === "agent" ? "🤖 AI Auto-Reply" : "👤 Human Takeover"}</span>
+                      <span className="hidden sm:inline">
+                        {selected.mode === "agent" ? "AI Auto" : "Human"}
+                      </span>
+                      <span className="text-[10px] opacity-75 font-normal">
+                        ({selected.mode === "agent" ? "Take Over" : "Resume AI"})
+                      </span>
                     </button>
+
+                    {/* Chat Three-dot Menu */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setChatMenuOpen((prev) => !prev)}
+                        className="p-2 rounded-full hover:bg-[var(--panel-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                        aria-label="Chat options"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="12" cy="5" r="2" />
+                          <circle cx="12" cy="12" r="2" />
+                          <circle cx="12" cy="19" r="2" />
+                        </svg>
+                      </button>
+
+                      {/* Dropdown */}
+                      {chatMenuOpen && (
+                        <div className="absolute right-0 top-11 w-48 bg-[var(--panel-bg)] border border-[var(--panel-border)] rounded-xl shadow-xl py-1.5 z-50 text-xs text-[var(--text-primary)]">
+                          <button
+                            onClick={() => {
+                              toggleMode();
+                              setChatMenuOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                          >
+                            <span>{selected.mode === "agent" ? "👤" : "🤖"}</span>
+                            <span>{selected.mode === "agent" ? "Switch to Human" : "Resume AI Auto"}</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleCopyPhone(selected.phone);
+                              setChatMenuOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                          >
+                            <span>📋</span>
+                            <span>Copy Phone Number</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveTab("knowledge");
+                              setChatMenuOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-[var(--panel-hover)] flex items-center gap-2 cursor-pointer"
+                          >
+                            <span>📚</span>
+                            <span>Check AI Catalog</span>
+                          </button>
+                          <div className="my-1 border-t border-[var(--panel-border)]" />
+                          <button
+                            onClick={handleBackToList}
+                            className="w-full text-left px-4 py-2 hover:bg-[var(--panel-hover)] text-[var(--text-secondary)] flex items-center gap-2 cursor-pointer"
+                          >
+                            <span>✕</span>
+                            <span>Close Chat</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </header>
 
                 {/* Chat Message Stream */}
-                <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-3 whatsapp-chat-wallpaper">
+                <div
+                  onClick={() => {
+                    setChatMenuOpen(false);
+                    setShowEmojiPicker(false);
+                  }}
+                  className="flex-1 overflow-y-auto px-3 sm:px-6 md:px-12 py-4 space-y-2.5 whatsapp-chat-wallpaper"
+                >
+                  {/* Security Banner */}
+                  <div className="flex justify-center my-2">
+                    <span className="px-3.5 py-1.5 rounded-lg bg-[var(--panel-header)]/90 backdrop-blur-xs text-[11px] text-[var(--text-secondary)] shadow-2xs border border-[var(--panel-border)]/40 flex items-center gap-1.5 select-none text-center">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                      <span>Messages and calls are end-to-end encrypted with WhatsApp Cloud API.</span>
+                    </span>
+                  </div>
+
                   {messages.length === 0 ? (
                     <div className="flex items-center justify-center h-48 text-center">
-                      <span className="px-3.5 py-1.5 rounded-lg bg-[var(--panel-bg)]/80 backdrop-blur-sm border border-[var(--panel-border)] text-xs text-[var(--text-secondary)] shadow-xs">
-                        End-to-end encrypted WhatsApp conversation
+                      <span className="px-3.5 py-1.5 rounded-lg bg-[var(--panel-header)]/80 text-xs text-[var(--text-secondary)] shadow-2xs">
+                        No messages yet in this conversation.
                       </span>
                     </div>
                   ) : (
@@ -538,84 +1001,169 @@ export default function Dashboard() {
                       const isUser = msg.role === "user";
                       const isAssistant = msg.role === "assistant";
 
+                      // Date separator check
+                      const prevMsg = i > 0 ? messages[i - 1] : null;
+                      const showDateDivider =
+                        !prevMsg ||
+                        formatDateDivider(msg.created_at) !== formatDateDivider(prevMsg.created_at);
+
                       return (
-                        <div
-                          key={msg.id || i}
-                          className={`flex ${isUser ? "justify-start" : "justify-end"}`}
-                        >
-                          <div
-                            className={`relative max-w-[85%] sm:max-w-[70%] md:max-w-[62%] px-3.5 py-2.5 rounded-2xl shadow-xs leading-relaxed text-sm ${
-                              isUser
-                                ? "bg-[var(--bubble-in)] text-[var(--bubble-in-text)] rounded-tl-xs border border-[var(--bubble-in-border)]"
-                                : "bg-[var(--bubble-out)] text-[var(--bubble-out-text)] rounded-tr-xs"
-                            }`}
-                          >
-                            {/* Assistant Tag */}
-                            {isAssistant && (
-                              <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--wa-green)] mb-1 uppercase tracking-wider">
-                                <span>🤖 BrandHive AI</span>
-                              </div>
-                            )}
+                        <React.Fragment key={msg.id || i}>
+                          {showDateDivider && (
+                            <div className="flex justify-center my-3 select-none">
+                              <span className="px-3 py-1 rounded-md bg-[var(--panel-header)]/90 backdrop-blur-xs text-[11px] font-semibold text-[var(--text-secondary)] shadow-2xs uppercase tracking-wider">
+                                {formatDateDivider(msg.created_at)}
+                              </span>
+                            </div>
+                          )}
 
-                            {/* Message Body */}
-                            <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-
-                            {/* Timestamp & Delivery Receipt */}
-                            <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-[var(--bubble-time)] select-none">
-                              <span>{formatTime(msg.created_at)}</span>
+                          <div className={`flex ${isUser ? "justify-start" : "justify-end"}`}>
+                            <div
+                              className={`relative max-w-[85%] sm:max-w-[72%] md:max-w-[65%] px-3 py-2 rounded-lg shadow-xs leading-relaxed text-[14px] ${
+                                isUser
+                                  ? "bg-[var(--bubble-in)] text-[var(--bubble-in-text)] rounded-tl-none border border-[var(--bubble-in-border)]"
+                                  : "bg-[var(--bubble-out)] text-[var(--bubble-out-text)] rounded-tr-none"
+                              }`}
+                            >
+                              {/* Assistant AI Tag */}
                               {isAssistant && (
-                                <span
-                                  className="text-sky-500 font-bold"
-                                  title="Delivered via WhatsApp"
-                                >
-                                  ✓✓
-                                </span>
+                                <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--wa-green)] mb-1 uppercase tracking-wider select-none">
+                                  <span>🤖 BrandHive AI</span>
+                                </div>
                               )}
+
+                              {/* Message Text with WhatsApp & Markdown support */}
+                              <ChatMarkdown content={msg.content} />
+
+                              {/* Timestamp and Double Checkmark */}
+                              <div className="flex items-center justify-end gap-1 mt-1 -mb-0.5 text-[11px] text-[var(--bubble-time)] select-none">
+                                <span>{formatBubbleTime(msg.created_at)}</span>
+                                {isAssistant && (
+                                  <span
+                                    className="text-[var(--ticks-read)] font-bold text-[11px]"
+                                    title="Delivered via WhatsApp"
+                                  >
+                                    ✓✓
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        </React.Fragment>
                       );
                     })
                   )}
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Message Composer */}
-                <footer className="px-4 md:px-6 py-3 border-t border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center gap-2 flex-shrink-0">
-                  <div className="flex-1 flex items-center gap-2 bg-[var(--input-bg)] border border-[var(--panel-border)] rounded-2xl px-3.5 py-2 focus-within:border-[var(--brand-cyan)] shadow-xs transition-colors">
+                {/* Emoji Quick Tray (WhatsApp Web inspired) */}
+                {showEmojiPicker && (
+                  <div className="px-4 py-2 border-t border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center gap-3 overflow-x-auto z-20">
+                    <span className="text-[11px] font-medium text-[var(--text-secondary)] flex-shrink-0">
+                      Quick Emoji:
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {QUICK_EMOJIS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => handleInsertEmoji(emoji)}
+                          className="w-8 h-8 rounded-lg hover:bg-[var(--panel-hover)] flex items-center justify-center text-lg transition-transform hover:scale-110 cursor-pointer"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Message Composer (WhatsApp Web authentic style) */}
+                <footer className="px-3 md:px-4 py-2.5 border-t border-[var(--panel-border)] bg-[var(--panel-header)] flex items-center gap-2 flex-shrink-0 relative">
+                  {/* Emoji Button */}
+                  <button
+                    onClick={() => setShowEmojiPicker((prev) => !prev)}
+                    className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-full hover:bg-[var(--panel-hover)] transition-colors cursor-pointer"
+                    title="Insert emoji"
+                    aria-label="Insert emoji"
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                      <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
+                      <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
+                    </svg>
+                  </button>
+
+                  {/* Attachment Icon */}
+                  <button
+                    onClick={() => {
+                      alert("WhatsApp Cloud API supports text messages, links, and documents. Direct media upload can be sent via WhatsApp Business.");
+                    }}
+                    className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-full hover:bg-[var(--panel-hover)] transition-colors cursor-pointer"
+                    title="Attach document or media"
+                    aria-label="Attach"
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                  </button>
+
+                  {/* Input Field */}
+                  <div className="flex-1 bg-[var(--input-bg)] border border-[var(--panel-border)] rounded-lg px-4 py-2.5 focus-within:border-[var(--brand-cyan)] transition-colors">
                     <input
                       ref={inputRef}
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSend();
+                        }
+                      }}
                       placeholder={
                         selected.mode === "agent"
                           ? "Type a manual reply (switches to Human mode)..."
-                          : "Type a reply to customer..."
+                          : "Type a message..."
                       }
-                      className="flex-1 bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
+                      className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
                     />
                   </div>
 
-                  {/* Send Button */}
-                  <button
-                    onClick={handleSend}
-                    disabled={sending || !input.trim()}
-                    className="w-10 h-10 rounded-full bg-[var(--wa-green)] hover:bg-[var(--wa-green-hover)] text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center shadow-xs flex-shrink-0 cursor-pointer"
-                    aria-label="Send WhatsApp message"
-                  >
-                    {sending ? (
-                      <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  {/* Dynamic Action Button: Send or Mic */}
+                  {input.trim() ? (
+                    <button
+                      onClick={handleSend}
+                      disabled={sending}
+                      className="w-10 h-10 rounded-full bg-[var(--wa-green)] hover:bg-[var(--wa-green-hover)] text-white disabled:opacity-40 transition-all flex items-center justify-center shadow-xs flex-shrink-0 cursor-pointer"
+                      aria-label="Send WhatsApp message"
+                      title="Send WhatsApp message"
+                    >
+                      {sending ? (
+                        <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                        </svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="22" y1="2" x2="11" y2="13" />
+                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => inputRef.current?.focus()}
+                      className="w-10 h-10 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-hover)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+                      title="Voice message supported via WhatsApp Business"
+                      aria-label="Voice message"
+                    >
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                        <line x1="12" y1="19" x2="12" y2="22" />
                       </svg>
-                    ) : (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="22" y1="2" x2="11" y2="13" />
-                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                      </svg>
-                    )}
-                  </button>
+                    </button>
+                  )}
                 </footer>
               </div>
             )}

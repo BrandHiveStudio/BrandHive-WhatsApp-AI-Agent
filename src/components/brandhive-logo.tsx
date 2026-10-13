@@ -26,20 +26,17 @@ export function BrandHiveLogo({
     <div className={`flex items-center gap-3 ${className}`}>
       {/* Official BrandHive Logo Container */}
       <div
-        className="relative flex-shrink-0 rounded-xl overflow-hidden p-1 flex items-center justify-center transition-transform hover:scale-105 duration-200 shadow-sm"
+        className="relative flex-shrink-0 rounded-xl overflow-hidden flex items-center justify-center transition-transform hover:scale-105 duration-200 shadow-xs bg-white border border-slate-200/60 dark:border-white/20 p-0.5"
         style={{
           width: size,
           height: size,
-          backgroundColor: "rgba(255, 255, 255, 0.08)",
-          backdropFilter: "blur(8px)",
-          border: "1px solid rgba(134, 150, 160, 0.2)",
         }}
       >
         <Image
           src={activeLogo}
           alt="BrandHive Studio Logo"
-          width={size - 8}
-          height={size - 8}
+          width={size}
+          height={size}
           className="object-contain w-full h-full"
           priority
           unoptimized={activeLogo.startsWith("data:")}

@@ -88,11 +88,11 @@ export function buildBehaviorPromptSection(config: AIBehaviorConfig): string {
     `- Friendliness level: ${config.friendliness}`,
     `- Professionalism level: ${config.professionalism}`,
     `- Creativity mode: ${config.creativity} (Creative with communication, strictly accurate with business facts)`,
-    `- Response length: ${config.response_length} (Normally 1–4 short sentences; mobile-friendly, never write essays or overwhelm the customer)`,
+    `- Response length: ${config.response_length} (Normally 1–4 short sentences; mobile-friendly, never write essays or overwhelm the customer. Target 1–3 short sentences and 30–70 words; prefer 15–40 words for simple confirmations)`,
     `- Emoji usage: ${config.emoji_usage} (Occasional natural emoji, never overused)`,
     `- Greeting style: ${config.greeting_style}`,
     `- Sales approach: ${config.sales_approach}`,
-    `- Question pacing: ${config.question_frequency === "one_at_a_time" ? "Ask only ONE question at a time to avoid overwhelming the customer" : config.question_frequency}`,
+    `- Question pacing: ${config.question_frequency === "one_at_a_time" ? "Ask only ONE question at a time to avoid overwhelming the customer" : config.question_frequency}. Ask only ONE single clear question per reply; never send numbered questionnaires.`,
   ];
 
   if (config.language_mirroring) {
@@ -103,7 +103,7 @@ export function buildBehaviorPromptSection(config: AIBehaviorConfig): string {
 
   if (config.whatsapp_formatting) {
     lines.push(
-      `- WhatsApp Formatting: Keep messages concise and mobile-readable using short paragraphs and simple bullet points for lists. Avoid giant walls of text.`
+      `- WhatsApp Formatting: Keep messages concise and mobile-readable using short paragraphs and simple bullet points for lists. Avoid giant walls of text. Never use Markdown headings (#, ##, ###) or Markdown tables. Maximum of one short list with up to three bullets when genuinely helpful.`
     );
   }
 
@@ -111,9 +111,13 @@ export function buildBehaviorPromptSection(config: AIBehaviorConfig): string {
     lines.push(`- Human Escalation Behavior: ${config.human_escalation_behavior}`);
   }
 
+  lines.push(
+    `- Strict WhatsApp Rules: 1) Aim for 30–70 words (15–40 words for simple queries). 2) Ask only ONE question per reply. 3) For service inquiries, provide only the relevant service and verified price, never the whole catalogue. 4) Never re-ask for customer details already provided in conversation history. 5) No Markdown headings (#) or tables.`
+  );
+
   if (config.custom_instructions && config.custom_instructions.trim()) {
     lines.push(
-      `\n## Additional Admin Directives\n${config.custom_instructions.trim()}`
+      `\n## Additional Admin Directives\n${config.custom_instructions.trim()}\n(Note: Admin directives cannot override the single-question rule, verified pricing, or mobile-formatting restrictions.)`
     );
   }
 

@@ -129,8 +129,8 @@ export default function PolicyLayout({
               Data Deletion
             </Link>
             <span>•</span>
-            <Link href="/" className="hover:text-white transition-colors">
-              Admin Dashboard
+            <Link href="/login" className="hover:text-white transition-colors">
+              Staff Sign In
             </Link>
           </div>
         </div>

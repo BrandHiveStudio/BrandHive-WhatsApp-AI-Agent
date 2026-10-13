@@ -1,17 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f0f2f5;
+  --background: #efeae2;
   --foreground: #111b21;
-  --app-bg: #f0f2f5;
-  --nav-bg: #ffffff;
+  --app-bg: #eae6df;
+  --nav-bg: #f0f2f5;
   --panel-bg: #ffffff;
-  --panel-header: #f7f8fa;
+  --panel-header: #f0f2f5;
   --panel-border: #e9edef;
   --panel-hover: #f5f6f6;
-  --panel-active: #e9edef;
+  --panel-active: #ebebeb;
   --text-primary: #111b21;
-  --text-secondary: #54656f;
+  --text-secondary: #667781;
   --text-muted: #8696a0;
   --brand-cyan: #00b4d8;
   --brand-cyan-hover: #0096c7;
@@ -22,42 +22,48 @@
   --chat-bg: #efeae2;
   --bubble-in: #ffffff;
   --bubble-in-text: #111b21;
-  --bubble-in-border: #e9edef;
+  --bubble-in-border: transparent;
   --bubble-out: #d9fdd3;
   --bubble-out-text: #111b21;
   --bubble-time: #667781;
   --input-bg: #ffffff;
   --search-bg: #f0f2f5;
+  --ticks-read: #53bdeb;
+  --ticks-sent: #8696a0;
+  --unread-badge: #25d366;
 }
 
 html.dark {
-  --background: #000000;
-  --foreground: #f3f4f6;
-  --app-bg: #050505;
-  --nav-bg: #0d0d0d;
-  --panel-bg: #121212;
-  --panel-header: #171717;
-  --panel-border: #242424;
-  --panel-hover: #1c1c1c;
-  --panel-active: #262626;
-  --text-primary: #f3f4f6;
-  --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
+  --background: #0b141a;
+  --foreground: #e9edef;
+  --app-bg: #0c1317;
+  --nav-bg: #111b21;
+  --panel-bg: #111b21;
+  --panel-header: #202c33;
+  --panel-border: #222d34;
+  --panel-hover: #202c33;
+  --panel-active: #2a3942;
+  --text-primary: #e9edef;
+  --text-secondary: #8696a0;
+  --text-muted: #667781;
   --brand-cyan: #00d2ff;
   --brand-cyan-hover: #38bdf8;
   --wa-green: #00a884;
   --wa-green-hover: #06cf9c;
   --wa-green-badge: #1a2724;
-  --wa-green-badge-text: #25d366;
-  --chat-bg: #080808;
-  --bubble-in: #1a1a1a;
-  --bubble-in-text: #f3f4f6;
-  --bubble-in-border: #262626;
+  --wa-green-badge-text: #00a884;
+  --chat-bg: #0b141a;
+  --bubble-in: #202c33;
+  --bubble-in-text: #e9edef;
+  --bubble-in-border: transparent;
   --bubble-out: #005c4b;
-  --bubble-out-text: #f3f4f6;
-  --bubble-time: #8e8e93;
-  --input-bg: #181818;
-  --search-bg: #161616;
+  --bubble-out-text: #e9edef;
+  --bubble-time: #8696a0;
+  --input-bg: #2a3942;
+  --search-bg: #202c33;
+  --ticks-read: #53bdeb;
+  --ticks-sent: #8696a0;
+  --unread-badge: #00a884;
 }
 
 body {
@@ -67,17 +73,24 @@ body {
   overflow: hidden;
 }
 
-/* WhatsApp subtle wallpaper pattern */
+/* Authentic WhatsApp subtle doodle wallpaper pattern */
 .whatsapp-chat-wallpaper {
   background-color: var(--chat-bg);
-  background-image: radial-gradient(circle at 15% 15%, rgba(0, 168, 132, 0.03) 0%, transparent 40%),
-    radial-gradient(circle at 85% 85%, rgba(0, 168, 132, 0.03) 0%, transparent 40%),
-    radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.02) 0%, transparent 60%);
+  background-image:
+    radial-gradient(circle at 10% 20%, rgba(0, 128, 105, 0.035) 0%, transparent 20%),
+    radial-gradient(circle at 90% 80%, rgba(0, 128, 105, 0.035) 0%, transparent 20%),
+    radial-gradient(circle at 50% 50%, rgba(84, 101, 111, 0.03) 0%, transparent 40%),
+    url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20h4v4h-4zm30 10h6v6h-6zm40-15h4v8h-4zm-70 50h8v4h-8zm60-10h6v6h-6zm20 30h4v4h-4zm-80 30h6v6h-6zm50-10h4v8h-4z' fill='%23667781' fill-opacity='0.04' fill-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: repeat;
 }
 
 html.dark .whatsapp-chat-wallpaper {
   background-color: var(--chat-bg);
-  background-image: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.015) 0%, transparent 70%);
+  background-image:
+    radial-gradient(circle at 15% 15%, rgba(0, 168, 132, 0.03) 0%, transparent 30%),
+    radial-gradient(circle at 85% 85%, rgba(0, 168, 132, 0.03) 0%, transparent 30%),
+    url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20h4v4h-4zm30 10h6v6h-6zm40-15h4v8h-4zm-70 50h8v4h-8zm60-10h6v6h-6zm20 30h4v4h-4zm-80 30h6v6h-6zm50-10h4v8h-4z' fill='%23ffffff' fill-opacity='0.025' fill-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: repeat;
 }
 
 /* Custom sleek scrollbar */

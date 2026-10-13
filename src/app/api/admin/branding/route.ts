@@ -10,9 +10,10 @@ const DEFAULT_BRANDING = {
 };
 
 export async function GET() {
-  try {
-    await requireStaffUser();
+  const auth = await requireStaffUser();
+  if ("error" in auth) return auth.error;
 
+  try {
     const { data } = await supabase
       .from("settings")
       .select("value")
@@ -29,17 +30,16 @@ export async function GET() {
     }
 
     return NextResponse.json({ branding: DEFAULT_BRANDING });
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("Unauthorized")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  } catch {
     return NextResponse.json({ branding: DEFAULT_BRANDING });
   }
 }
 
 export async function PUT(request: Request) {
+  const auth = await requireStaffUser();
+  if ("error" in auth) return auth.error;
+
   try {
-    await requireStaffUser();
     const body = await request.json();
 
     if (!body || typeof body !== "object") {
