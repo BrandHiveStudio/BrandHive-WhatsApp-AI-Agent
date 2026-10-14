@@ -11,6 +11,11 @@ import { AdminCoexistenceView } from "@/components/admin-coexistence-view";
 import { AdminBrandingView } from "@/components/admin-branding-view";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import type { ConversationWithLastMessage, Message } from "@/lib/types";
+import {
+  mergeMessages,
+  isPayloadSanitized,
+  getWhatsAppStatusIcon,
+} from "@/lib/chat-realtime";
 
 // Quick emoji shortcuts for WhatsApp composer
 const QUICK_EMOJIS = ["👋", "👍", "🙏", "😊", "🎉", "💼", "📞", "✨", "❤️", "🔥"];
@@ -41,6 +46,8 @@ export default function Dashboard() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const selected = conversations.find((c) => c.id === selectedId);
 
@@ -89,16 +96,42 @@ export default function Dashboard() {
     }
   }, []);
 
+  // Keep selectedIdRef in sync with selectedId
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
   const fetchMessages = useCallback(async (convoId: string) => {
     try {
       const res = await fetch(`/api/conversations/${convoId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        setMessages(data);
+        setMessages((prev) => mergeMessages(prev, data));
       }
     } catch {
       // Graceful error handle
     }
+  }, []);
+
+  // Debounced message reconciliation for active open conversation
+  const triggerReconciliation = useCallback((targetConvoId: string) => {
+    if (!targetConvoId) return;
+    if (reconcileTimerRef.current) {
+      clearTimeout(reconcileTimerRef.current);
+    }
+    reconcileTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/conversations/${targetConvoId}/messages`);
+        if (res.ok) {
+          const latestMessages = await res.json();
+          if (selectedIdRef.current === targetConvoId) {
+            setMessages((prev) => mergeMessages(prev, latestMessages));
+          }
+        }
+      } catch {
+        // Graceful error handle
+      }
+    }, 120);
   }, []);
 
   // Initial load of conversations
@@ -114,9 +147,12 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Fetch messages when conversation changes
+  // Fetch messages when conversation changes (and clear previous messages to avoid stale display)
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      setMessages([]);
+      return;
+    }
     let active = true;
     fetch(`/api/conversations/${selectedId}/messages`)
       .then((res) => (res.ok ? res.json() : []))
@@ -140,43 +176,116 @@ export default function Dashboard() {
     }
   }, [selectedId, activeTab]);
 
-  // Realtime Supabase Channel
+  // Realtime Supabase Channel (stable subscription across conversation switches)
   useEffect(() => {
     if (!supabase) return;
-    const channel = supabase
-      .channel("realtime-messages")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages" },
-        (payload) => {
-          const newMsg = payload.new as Message;
-          if (newMsg.conversation_id === selectedId) {
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newMsg.id)) return prev;
-              return [...prev, newMsg];
-            });
-          } else if (newMsg.role === "user") {
-            // Incoming message to an unselected conversation: mark as unread
-            setUnreadConvos((prev) => new Set(prev).add(newMsg.conversation_id));
+
+    let reconnectTimer: NodeJS.Timeout | null = null;
+    let isSubscribed = true;
+
+    function setupChannel() {
+      if (!supabase || !isSubscribed) return null;
+
+      const channel = supabase
+        .channel("realtime-messages-v2")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "messages" },
+          (payload) => {
+            const currentId = selectedIdRef.current;
+            const newRow = payload.new as Partial<Message> | undefined;
+
+            if (newRow && !isPayloadSanitized(newRow) && newRow.conversation_id) {
+              if (newRow.conversation_id === currentId) {
+                setMessages((prev) => mergeMessages(prev, [newRow as Message]));
+              } else if (newRow.role === "user") {
+                setUnreadConvos((prev) => new Set(prev).add(newRow.conversation_id!));
+              }
+            } else {
+              // Sanitized or RLS-protected payload: reconcile active conversation
+              if (currentId) {
+                triggerReconciliation(currentId);
+              }
+            }
+            fetchConversations();
           }
-          fetchConversations();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
-        () => fetchConversations()
-      )
-      .subscribe();
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "conversations" },
+          (payload) => {
+            fetchConversations();
+            const currentId = selectedIdRef.current;
+            const convoPayload = payload.new as { id?: string } | undefined;
+            if (currentId && (!convoPayload?.id || convoPayload.id === currentId)) {
+              triggerReconciliation(currentId);
+            }
+          }
+        )
+        .subscribe((status, error) => {
+          if (status === "SUBSCRIBED") {
+            if (selectedIdRef.current) {
+              triggerReconciliation(selectedIdRef.current);
+            }
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(`Supabase Realtime subscription status: ${status}`, error);
+            if (isSubscribed) {
+              reconnectTimer = setTimeout(() => {
+                supabase?.removeChannel(channel);
+                setupChannel();
+              }, 3000);
+            }
+          }
+        });
+
+      return channel;
+    }
+
+    const channel = setupChannel();
 
     return () => {
-      supabase?.removeChannel(channel);
+      isSubscribed = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (channel) {
+        supabase?.removeChannel(channel);
+      }
     };
-  }, [selectedId, fetchConversations, supabase]);
+  }, [supabase, fetchConversations, triggerReconciliation]);
+
+  // Window focus & online reconnection handler (syncs missed messages after sleep/app switch)
+  useEffect(() => {
+    const handleReconcile = () => {
+      fetchConversations();
+      if (selectedIdRef.current) {
+        triggerReconciliation(selectedIdRef.current);
+      }
+    };
+    window.addEventListener("focus", handleReconcile);
+    window.addEventListener("online", handleReconcile);
+    return () => {
+      window.removeEventListener("focus", handleReconcile);
+      window.removeEventListener("online", handleReconcile);
+    };
+  }, [fetchConversations, triggerReconciliation]);
+
+  // Gentle, visibility-guarded heartbeat: reconciles open conversation every 6s when visible
+  useEffect(() => {
+    if (!selectedId) return;
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && !document.hidden && selectedIdRef.current) {
+        triggerReconciliation(selectedIdRef.current);
+      }
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [selectedId, triggerReconciliation]);
 
   // Select conversation handler with mobile history integration
   const handleSelectConversation = (id: string) => {
+    if (id !== selectedId) {
+      setMessages([]);
+    }
     setSelectedId(id);
+    selectedIdRef.current = id;
     setUnreadConvos((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
@@ -192,6 +301,8 @@ export default function Dashboard() {
   // Back to conversation list
   const handleBackToList = () => {
     setSelectedId(null);
+    selectedIdRef.current = null;
+    setMessages([]);
     setChatMenuOpen(false);
     if (typeof window !== "undefined" && window.history.state?.selectedId) {
       window.history.back();
@@ -1038,14 +1149,17 @@ export default function Dashboard() {
                               {/* Timestamp and Double Checkmark */}
                               <div className="flex items-center justify-end gap-1 mt-1 -mb-0.5 text-[11px] text-[var(--bubble-time)] select-none">
                                 <span>{formatBubbleTime(msg.created_at)}</span>
-                                {isAssistant && (
-                                  <span
-                                    className="text-[var(--ticks-read)] font-bold text-[11px]"
-                                    title="Delivered via WhatsApp"
-                                  >
-                                    ✓✓
-                                  </span>
-                                )}
+                                {isAssistant && (() => {
+                                  const icon = getWhatsAppStatusIcon(msg.wa_status);
+                                  return (
+                                    <span
+                                      className={icon.className}
+                                      title={icon.title}
+                                    >
+                                      {icon.symbol}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>

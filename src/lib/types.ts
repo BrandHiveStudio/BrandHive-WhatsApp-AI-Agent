@@ -14,6 +14,12 @@ export interface Message {
   content: string;
   whatsapp_msg_id: string | null;
   created_at: string;
+  whatsapp_type?: string | null;
+  direction?: "in" | "out" | null;
+  media_url?: string | null;
+  wa_status?: "sent" | "delivered" | "read" | "failed" | null;
+  ai_reply_sent?: boolean;
+  error?: string | null;
 }
 
 export interface ConversationWithLastMessage extends Conversation {
