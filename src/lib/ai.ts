@@ -8,13 +8,23 @@ import type { AIBehaviorConfig } from "@/lib/types";
 
 let _geminiClient: OpenAI | null = null;
 
+export const PRIMARY_GEMINI_MODEL = "gemini-3.5-flash-lite";
+export const RECOVERY_GEMINI_MODEL = "gemini-flash-lite-latest";
+export const GEMINI_REQUEST_TIMEOUT_MS = 8000; // 8-second request timeout to prevent hanging beyond Meta webhook cutoff
+
+export function resetGeminiClient(): void {
+  _geminiClient = null;
+}
+
 // Lazy singleton for Google Gemini using Google's official OpenAI-compatible endpoint.
-// Fails clearly on first real use if GEMINI_API_KEY is missing, not at module import / build time.
+// Configured with strict 8-second timeout and zero internal SDK retries for bounded behavior.
 function getGeminiClient(): OpenAI {
   if (!_geminiClient) {
     _geminiClient = new OpenAI({
       baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: getRequiredEnv("GEMINI_API_KEY"),
+      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
     });
   }
   return _geminiClient;
@@ -25,11 +35,33 @@ const MAX_TOOL_ITERATIONS = 5;
 
 let _activeModelOverride: string | null = null;
 
+export function resetActiveModelOverride(): void {
+  _activeModelOverride = null;
+}
+
+export function resolveDefaultModel(): string {
+  if (_activeModelOverride) return _activeModelOverride;
+  const envModel = process.env.GEMINI_MODEL;
+  // If unset or pointing to retired/throttled legacy models (gemini-2.5-flash, gemini-3.6-flash, gemini-3.5-flash),
+  // directly use the verified fast primary model: gemini-3.5-flash-lite.
+  if (
+    !envModel ||
+    envModel === "gemini-2.5-flash" ||
+    envModel === "gemini-3.6-flash" ||
+    envModel === "gemini-3.5-flash"
+  ) {
+    return PRIMARY_GEMINI_MODEL;
+  }
+  return envModel;
+}
+
 async function createCompletionWithRetry(
   params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
 ): Promise<OpenAI.Chat.ChatCompletion> {
-  const maxRetries = 2;
+  // Bounded retry: at most 1 recovery attempt, never retrying rate-limit errors repeatedly
+  const maxRetries = 1;
   let currentParams = { ...params };
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await getGeminiClient().chat.completions.create(currentParams);
@@ -38,22 +70,25 @@ async function createCompletionWithRetry(
       }
       return response;
     } catch (err: unknown) {
-      const isTransient =
-        err instanceof Error &&
-        (err.message.includes("429") ||
-          err.message.includes("503") ||
-          err.message.includes("500") ||
-          [429, 500, 503].includes((err as { status?: number }).status ?? 0));
+      const status = (err as { status?: number }).status ?? 0;
+      const message = err instanceof Error ? err.message : "";
+      const isRateLimit = status === 429 || message.includes("429");
+      const isServerError = status === 500 || status === 503 || message.includes("500") || message.includes("503");
+      const isTimeout = message.includes("timeout") || message.includes("ETIMEDOUT") || (err as { code?: string }).code === "ETIMEDOUT";
 
-      if (isTransient && attempt < maxRetries) {
-        if (currentParams.model === "gemini-3.6-flash") {
-          currentParams = { ...currentParams, model: "gemini-3.5-flash" };
-          _activeModelOverride = "gemini-3.5-flash";
-        } else if (currentParams.model === "gemini-3.5-flash") {
-          currentParams = { ...currentParams, model: "gemini-3.5-flash-lite" };
-          _activeModelOverride = "gemini-3.5-flash-lite";
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+      const canRecover = (isRateLimit || isServerError || isTimeout) && attempt < maxRetries;
+
+      if (canRecover) {
+        // Safe recovery path: switch to backup lite model once; do not loop or delay repeatedly
+        const nextModel =
+          currentParams.model === PRIMARY_GEMINI_MODEL
+            ? RECOVERY_GEMINI_MODEL
+            : PRIMARY_GEMINI_MODEL;
+
+        currentParams = { ...currentParams, model: nextModel };
+        _activeModelOverride = nextModel;
+        // Bounded brief pause (500ms max)
+        await new Promise((resolve) => setTimeout(resolve, 500));
         continue;
       }
       throw err;
@@ -66,11 +101,7 @@ export async function getAIResponse(
   messages: { role: "user" | "assistant"; content: string }[],
   behaviorOverride?: Partial<AIBehaviorConfig>
 ) {
-  // Google Gemini API retired gemini-2.5-flash for new keys (HTTP 404: "This model models/gemini-2.5-flash
-  // is no longer available to new users. Please update your code to use models/gemini-3.6-flash").
-  // Automatically map retired gemini-2.5-flash to Google's active replacement gemini-3.6-flash.
-  const rawModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const model = _activeModelOverride || (rawModel === "gemini-2.5-flash" ? "gemini-3.6-flash" : rawModel);
+  const model = resolveDefaultModel();
 
   const activeBehavior = behaviorOverride
     ? { ...(await getAIBehaviorConfig()), ...behaviorOverride }
@@ -91,8 +122,6 @@ export async function getAIResponse(
       tools: isFinalIteration ? undefined : KNOWLEDGE_TOOLS,
       tool_choice: isFinalIteration ? "none" : "auto",
     });
-
-
 
     const message = completion.choices[0]?.message;
     if (!message) return FALLBACK_MESSAGE;

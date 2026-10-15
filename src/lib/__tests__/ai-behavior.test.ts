@@ -4,6 +4,7 @@ import {
   buildBehaviorPromptSection,
   getAIBehaviorConfig,
   saveAIBehaviorConfig,
+  clearAIBehaviorCache,
 } from "@/lib/ai-behavior";
 import { buildSystemPrompt } from "@/lib/system-prompt";
 
@@ -17,6 +18,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 beforeEach(() => {
+  clearAIBehaviorCache();
   currentMock = {
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnThis(),

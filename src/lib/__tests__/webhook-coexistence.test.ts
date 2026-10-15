@@ -157,7 +157,7 @@ vi.mock("@/lib/supabase", () => {
 });
 
 // Import POST handler after mocks are configured
-import { POST } from "@/app/api/webhook/route";
+import { POST, clearInFlightMessages, setInFlightMessageForTest } from "@/app/api/webhook/route";
 
 function createSignedRequest(payload: object, secret: string = TEST_SECRET): NextRequest {
   const rawBody = JSON.stringify(payload);
@@ -175,6 +175,7 @@ function createSignedRequest(payload: object, secret: string = TEST_SECRET): Nex
 describe("WhatsApp Coexistence & Webhook Synchronization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearInFlightMessages();
     mockConversations = [];
     mockMessages = [];
   });
@@ -533,6 +534,244 @@ describe("WhatsApp Coexistence & Webhook Synchronization", () => {
       const res = await POST(createSignedRequest(payload));
       const json = await res.json();
       expect(json.status).toBe("ignored");
+    });
+  });
+
+  describe("Duplicate Webhook Deliveries & Concurrent AI Response Prevention", () => {
+    it("returns duplicate_already_replied and does not invoke AI when message was already answered", async () => {
+      const customerPhone = "94770001122";
+      const msgId = "wamid.dup_answered_001";
+
+      mockConversations.push({
+        id: "convo_dup_1",
+        phone: customerPhone,
+        name: "Test Customer",
+        mode: "agent",
+        needs_human: false,
+        updated_at: new Date().toISOString(),
+      });
+
+      mockMessages.push({
+        id: "msg_dup_1",
+        conversation_id: "convo_dup_1",
+        role: "user",
+        direction: "in",
+        whatsapp_type: "text",
+        content: "Hello again",
+        whatsapp_msg_id: msgId,
+        ai_reply_sent: true,
+        created_at: new Date().toISOString(),
+      });
+
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                field: "messages",
+                value: {
+                  messages: [
+                    {
+                      from: customerPhone,
+                      id: msgId,
+                      timestamp: "1749416000",
+                      type: "text",
+                      text: { body: "Hello again" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const res = await POST(createSignedRequest(payload));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.status).toBe("duplicate_already_replied");
+      expect(mockGetAIResponse).not.toHaveBeenCalled();
+      expect(mockSendWhatsAppMessage).not.toHaveBeenCalled();
+    });
+
+    it("returns duplicate_in_progress and prevents duplicate concurrent AI response when message is already stored recently (< 60 seconds)", async () => {
+      const customerPhone = "94770001122";
+      const msgId = "wamid.dup_inflight_001";
+
+      mockConversations.push({
+        id: "convo_dup_2",
+        phone: customerPhone,
+        name: "Test Customer",
+        mode: "agent",
+        needs_human: false,
+        updated_at: new Date().toISOString(),
+      });
+
+      // Message already stored from first delivery 10 seconds ago, ai_reply_sent is false
+      mockMessages.push({
+        id: "msg_dup_2",
+        conversation_id: "convo_dup_2",
+        role: "user",
+        direction: "in",
+        whatsapp_type: "text",
+        content: "What are your services?",
+        whatsapp_msg_id: msgId,
+        ai_reply_sent: false,
+        created_at: new Date(Date.now() - 10_000).toISOString(),
+      });
+
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                field: "messages",
+                value: {
+                  messages: [
+                    {
+                      from: customerPhone,
+                      id: msgId,
+                      timestamp: "1749416000",
+                      type: "text",
+                      text: { body: "What are your services?" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const res = await POST(createSignedRequest(payload));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.status).toBe("duplicate_in_progress");
+      expect(mockGetAIResponse).not.toHaveBeenCalled();
+      expect(mockSendWhatsAppMessage).not.toHaveBeenCalled();
+    });
+
+    it("returns duplicate_in_progress immediately when message is currently in-flight in memory", async () => {
+      const customerPhone = "94770005566";
+      const msgId = "wamid.inflight_mem_001";
+
+      setInFlightMessageForTest(msgId);
+
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                field: "messages",
+                value: {
+                  messages: [
+                    {
+                      from: customerPhone,
+                      id: msgId,
+                      timestamp: "1749416000",
+                      type: "text",
+                      text: { body: "Burst message" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const res = await POST(createSignedRequest(payload));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.status).toBe("duplicate_in_progress");
+      expect(mockGetAIResponse).not.toHaveBeenCalled();
+      expect(mockSendWhatsAppMessage).not.toHaveBeenCalled();
+    });
+
+    it("allows safe retry of stale un-replied message (> 60 seconds old) without creating duplicate customer message", async () => {
+      const customerPhone = "94770003344";
+      const msgId = "wamid.stale_retry_001";
+      const convoId = "convo_stale_1";
+
+      mockConversations.push({
+        id: convoId,
+        phone: customerPhone,
+        name: "Stale Customer",
+        mode: "agent",
+        needs_human: false,
+        updated_at: new Date(Date.now() - 120_000).toISOString(),
+      });
+
+      // Stored 90 seconds ago, initial AI call failed so ai_reply_sent is still false
+      mockMessages.push({
+        id: "msg_stale_1",
+        conversation_id: convoId,
+        role: "user",
+        direction: "in",
+        whatsapp_type: "text",
+        content: "I need pricing details",
+        whatsapp_msg_id: msgId,
+        ai_reply_sent: false,
+        created_at: new Date(Date.now() - 90_000).toISOString(),
+      });
+
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                field: "messages",
+                value: {
+                  messages: [
+                    {
+                      from: customerPhone,
+                      id: msgId,
+                      timestamp: String(Math.floor((Date.now() - 90_000) / 1000)),
+                      type: "text",
+                      text: { body: "I need pricing details" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const res = await POST(createSignedRequest(payload));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.status).toBe("replied");
+      expect(mockGetAIResponse).toHaveBeenCalledTimes(1);
+      expect(mockSendWhatsAppMessage).toHaveBeenCalledTimes(1);
+
+      // Verify that NO duplicate customer message was inserted
+      const customerMessages = mockMessages.filter(
+        (m) => m.whatsapp_msg_id === msgId && m.direction === "in"
+      );
+      expect(customerMessages.length).toBe(1);
+      expect(customerMessages[0].ai_reply_sent).toBe(true);
+
+      // Verify assistant message was created
+      const assistantMessages = mockMessages.filter(
+        (m) => m.conversation_id === convoId && m.role === "assistant"
+      );
+      expect(assistantMessages.length).toBe(1);
+
+      // Verify subsequent retry now immediately returns duplicate_already_replied
+      const retryRes = await POST(createSignedRequest(payload));
+      const retryJson = await retryRes.json();
+      expect(retryRes.status).toBe(200);
+      expect(retryJson.status).toBe("duplicate_already_replied");
+      expect(mockGetAIResponse).toHaveBeenCalledTimes(1); // not called again
     });
   });
 });

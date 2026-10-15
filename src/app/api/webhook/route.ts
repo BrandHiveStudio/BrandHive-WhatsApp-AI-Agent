@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { getAIResponse } from "@/lib/ai";
+import { getAIBehaviorConfig } from "@/lib/ai-behavior";
 import { verifyMetaSignature } from "@/lib/webhook-signature";
 import { getRequiredEnv } from "@/lib/env";
 import { detectMessageLanguage } from "@/lib/language-detect";
@@ -13,6 +14,17 @@ import {
   isEchoChange,
   isIncomingMessageChange,
 } from "@/lib/webhook-parser";
+
+// In-flight message lock to prevent concurrent webhook executions for the same message ID
+const inFlightMessages = new Set<string>();
+
+export function clearInFlightMessages(): void {
+  inFlightMessages.clear();
+}
+
+export function setInFlightMessageForTest(id: string): void {
+  inFlightMessages.add(id);
+}
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -230,11 +242,15 @@ export async function POST(request: NextRequest) {
         return Response.json({ error: "Failed to create conversation" }, { status: 500 });
       }
 
-      // Deduplication check
-      let inboundMessage: { id: string; ai_reply_sent: boolean } | null = null;
+      // 1. Process-level deduplication: if this WhatsApp message is already in flight, exit immediately
+      if (whatsappMsgId && inFlightMessages.has(whatsappMsgId)) {
+        return Response.json({ status: "duplicate_in_progress" });
+      }
+
+      // 2. Database-level deduplication check
       const { data: existingMessage } = await supabase
         .from("messages")
-        .select("id, ai_reply_sent")
+        .select("id, ai_reply_sent, created_at")
         .eq("whatsapp_msg_id", whatsappMsgId)
         .maybeSingle();
 
@@ -242,106 +258,118 @@ export async function POST(request: NextRequest) {
         if (existingMessage.ai_reply_sent) {
           return Response.json({ status: "duplicate_already_replied" });
         }
-        inboundMessage = existingMessage;
-      } else {
-        const { data: newMessage, error: insertError } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: conversation.id,
-            role: "user",
-            direction: "in",
-            whatsapp_type: whatsappType,
-            content: text,
-            whatsapp_msg_id: whatsappMsgId,
-            created_at: messageCreatedAt,
-          })
-          .select("id, ai_reply_sent")
-          .single();
 
-        if (insertError?.code === "23505") {
-          const { data: raceMessage } = await supabase
+        const createdAtMs = existingMessage.created_at
+          ? new Date(existingMessage.created_at).getTime()
+          : NaN;
+        const messageAgeMs = !Number.isNaN(createdAtMs) ? Date.now() - createdAtMs : 0;
+
+        // If message is under 60 seconds old, it is considered actively in progress
+        if (messageAgeMs < 60000) {
+          return Response.json({ status: "duplicate_in_progress" });
+        }
+        // If older than 60 seconds with no reply sent, allow a safe retry
+      }
+
+      if (whatsappMsgId) {
+        inFlightMessages.add(whatsappMsgId);
+      }
+
+      let inboundMessageId: string;
+      try {
+        if (existingMessage) {
+          // Safe retry: reuse existing message record, do not insert duplicate row
+          inboundMessageId = existingMessage.id;
+        } else {
+          const { data: newMessage, error: insertError } = await supabase
             .from("messages")
-            .select("id, ai_reply_sent")
-            .eq("whatsapp_msg_id", whatsappMsgId)
+            .insert({
+              conversation_id: conversation.id,
+              role: "user",
+              direction: "in",
+              whatsapp_type: whatsappType,
+              content: text,
+              whatsapp_msg_id: whatsappMsgId,
+              created_at: messageCreatedAt,
+            })
+            .select("id")
             .single();
 
-          if (raceMessage?.ai_reply_sent) {
-            return Response.json({ status: "duplicate_already_replied" });
+          if (insertError?.code === "23505") {
+            // Race condition: concurrent delivery already claimed and inserted this message
+            return Response.json({ status: "duplicate_in_progress" });
+          } else if (insertError || !newMessage) {
+            console.error(
+              "Failed to store inbound message:",
+              insertError?.message ?? "unknown error"
+            );
+            return Response.json({ status: "error" }, { status: 500 });
+          } else {
+            inboundMessageId = newMessage.id;
           }
-          inboundMessage = raceMessage ?? null;
-        } else if (insertError || !newMessage) {
-          console.error(
-            "Failed to store inbound message:",
-            insertError?.message ?? "unknown error"
-          );
-          return Response.json({ status: "error" }, { status: 500 });
-        } else {
-          inboundMessage = newMessage;
+        }
+
+        // If mode is 'human', AI replies are paused
+        if (conversation.mode === "human") {
+          return Response.json({ status: "stored_for_human" });
+        }
+
+        // 3. Optimize independent queries: fetch recent messages, AI behavior config,
+        // and update conversation timestamp/language concurrently in parallel
+        const detectedLanguage = detectMessageLanguage(text);
+        const [recentDescResult, behaviorConfig] = await Promise.all([
+          supabase
+            .from("messages")
+            .select("role, content")
+            .eq("conversation_id", conversation.id)
+            .order("created_at", { ascending: false })
+            .limit(20),
+          getAIBehaviorConfig(),
+          supabase
+            .from("conversations")
+            .update({
+              last_customer_message_at: messageCreatedAt,
+              updated_at: new Date().toISOString(),
+              language: detectedLanguage ?? conversation.language,
+            })
+            .eq("id", conversation.id),
+        ]);
+
+        const history = (recentDescResult.data || [])
+          .slice()
+          .reverse()
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          }));
+
+        // 4. Get AI response with pre-fetched behavior config
+        const aiResponse = await getAIResponse(history, behaviorConfig);
+        await sendWhatsAppMessage(phone, aiResponse);
+
+        // 5. Parallelize post-reply database state updates
+        const nowIso = new Date().toISOString();
+        await Promise.all([
+          supabase.from("messages").insert({
+            conversation_id: conversation.id,
+            role: "assistant",
+            direction: "out",
+            whatsapp_type: "text",
+            content: aiResponse,
+          }),
+          supabase.from("messages").update({ ai_reply_sent: true }).eq("id", inboundMessageId),
+          supabase.from("conversations").update({
+            last_agent_message_at: nowIso,
+            updated_at: nowIso,
+          }).eq("id", conversation.id),
+        ]);
+
+        return Response.json({ status: "replied" });
+      } finally {
+        if (whatsappMsgId) {
+          inFlightMessages.delete(whatsappMsgId);
         }
       }
-
-      if (!inboundMessage) {
-        return Response.json({ status: "error" }, { status: 500 });
-      }
-
-      // Update conversation timestamp, last_customer_message_at, and detected language
-      const detectedLanguage = detectMessageLanguage(text);
-      await supabase
-        .from("conversations")
-        .update({
-          last_customer_message_at: messageCreatedAt,
-          updated_at: new Date().toISOString(),
-          language: detectedLanguage ?? conversation.language,
-        })
-        .eq("id", conversation.id);
-
-      // If mode is 'human', AI replies are paused
-      if (conversation.mode === "human") {
-        return Response.json({ status: "stored_for_human" });
-      }
-
-      // Fetch recent messages for Gemini context
-      const { data: recentDesc } = await supabase
-        .from("messages")
-        .select("role, content")
-        .eq("conversation_id", conversation.id)
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      const history = (recentDesc || [])
-        .slice()
-        .reverse()
-        .map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        }));
-
-      // Get AI response and send via WhatsApp
-      const aiResponse = await getAIResponse(history);
-      await sendWhatsAppMessage(phone, aiResponse);
-
-      // Store AI response
-      await supabase.from("messages").insert({
-        conversation_id: conversation.id,
-        role: "assistant",
-        direction: "out",
-        whatsapp_type: "text",
-        content: aiResponse,
-      });
-
-      // Mark inbound message as answered
-      await supabase.from("messages").update({ ai_reply_sent: true }).eq("id", inboundMessage.id);
-
-      // Update conversation timestamp
-      await supabase
-        .from("conversations")
-        .update({
-          last_agent_message_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", conversation.id);
-
-      return Response.json({ status: "replied" });
     }
 
     // =========================================================================

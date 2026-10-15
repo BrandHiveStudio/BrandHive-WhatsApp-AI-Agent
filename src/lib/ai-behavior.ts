@@ -18,12 +18,25 @@ export const DEFAULT_AI_BEHAVIOR: AIBehaviorConfig = {
   custom_instructions: "",
 };
 
+let _cachedBehaviorConfig: { config: AIBehaviorConfig; expiresAt: number } | null = null;
+const BEHAVIOR_CACHE_TTL_MS = 60 * 1000;
+
+export function clearAIBehaviorCache(): void {
+  _cachedBehaviorConfig = null;
+}
+
 /**
  * Loads the active AI conversation behavior configuration from the authoritative
  * `settings` table (key: 'ai_behavior'). If unconfigured, absent, or unreachable,
  * safely falls back to BrandHive's default conversational behavior.
+ * Caches in memory for 60s to prevent redundant database round-trips per message.
  */
 export async function getAIBehaviorConfig(): Promise<AIBehaviorConfig> {
+  const now = Date.now();
+  if (_cachedBehaviorConfig && _cachedBehaviorConfig.expiresAt > now) {
+    return _cachedBehaviorConfig.config;
+  }
+
   try {
     const { data, error } = await supabase
       .from("settings")
@@ -33,13 +46,16 @@ export async function getAIBehaviorConfig(): Promise<AIBehaviorConfig> {
       .maybeSingle();
 
     if (error || !data || !data.value || typeof data.value !== "object") {
+      _cachedBehaviorConfig = { config: { ...DEFAULT_AI_BEHAVIOR }, expiresAt: now + BEHAVIOR_CACHE_TTL_MS };
       return { ...DEFAULT_AI_BEHAVIOR };
     }
 
-    return {
+    const merged = {
       ...DEFAULT_AI_BEHAVIOR,
       ...(data.value as Partial<AIBehaviorConfig>),
     };
+    _cachedBehaviorConfig = { config: merged, expiresAt: now + BEHAVIOR_CACHE_TTL_MS };
+    return merged;
   } catch {
     return { ...DEFAULT_AI_BEHAVIOR };
   }
@@ -52,6 +68,7 @@ export async function getAIBehaviorConfig(): Promise<AIBehaviorConfig> {
 export async function saveAIBehaviorConfig(
   updates: Partial<AIBehaviorConfig>
 ): Promise<AIBehaviorConfig> {
+  clearAIBehaviorCache();
   const current = await getAIBehaviorConfig();
   const merged: AIBehaviorConfig = {
     ...current,
@@ -73,6 +90,7 @@ export async function saveAIBehaviorConfig(
     throw new Error(`Failed to save AI behavior settings: ${error.message}`);
   }
 
+  _cachedBehaviorConfig = { config: merged, expiresAt: Date.now() + BEHAVIOR_CACHE_TTL_MS };
   return merged;
 }
 

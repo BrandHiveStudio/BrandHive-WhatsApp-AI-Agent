@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe("getAIResponse orchestration", () => {
-  it("initializes OpenAI client targeting Google Gemini's OpenAI-compatible endpoint", async () => {
+  it("initializes OpenAI client targeting Google Gemini with 8s timeout and zero internal SDK retries", async () => {
     createCompletion.mockResolvedValueOnce({
       choices: [{ message: { role: "assistant", content: "Hello! How can I help?" } }],
     });
@@ -46,16 +46,43 @@ describe("getAIResponse orchestration", () => {
       expect.objectContaining({
         baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
         apiKey: "test-GEMINI_API_KEY-value",
+        timeout: 8000,
+        maxRetries: 0,
       })
     );
   });
 
-  it("resolves gemini-2.5-flash to Google's active gemini-3.6-flash model", async () => {
+  it("resolves legacy model setting to fast primary gemini-3.5-flash-lite model", async () => {
     createCompletion.mockResolvedValueOnce({
       choices: [{ message: { role: "assistant", content: "Hello!" } }],
     });
     await getAIResponse([{ role: "user", content: "Hi" }]);
-    expect(createCompletion.mock.calls[0][0].model).toBe("gemini-3.6-flash");
+    expect(createCompletion.mock.calls[0][0].model).toBe("gemini-3.5-flash-lite");
+  });
+
+  it("executes at most 1 recovery attempt on rate limit (429) using recovery model without looping repeatedly", async () => {
+    // First attempt fails with 429
+    createCompletion.mockRejectedValueOnce(new Error("429 Too Many Requests"));
+    // Recovery attempt succeeds
+    createCompletion.mockResolvedValueOnce({
+      choices: [{ message: { role: "assistant", content: "Recovered successfully!" } }],
+    });
+
+    const reply = await getAIResponse([{ role: "user", content: "Hello" }]);
+    expect(reply).toBe("Recovered successfully!");
+    expect(createCompletion).toHaveBeenCalledTimes(2);
+    // First call was primary model, second call switched to recovery model
+    expect(createCompletion.mock.calls[0][0].model).toBe("gemini-3.5-flash-lite");
+    expect(createCompletion.mock.calls[1][0].model).toBe("gemini-flash-lite-latest");
+  });
+
+  it("stops and throws error after single recovery failure without repeated retrying", async () => {
+    createCompletion.mockRejectedValueOnce(new Error("429 Too Many Requests"));
+    createCompletion.mockRejectedValueOnce(new Error("429 Too Many Requests"));
+
+    await expect(getAIResponse([{ role: "user", content: "Hello" }])).rejects.toThrow("429 Too Many Requests");
+    // Strictly bounded: exactly 2 attempts total (initial + 1 recovery)
+    expect(createCompletion).toHaveBeenCalledTimes(2);
   });
 
   it("returns the model's direct reply when no tool call is requested", async () => {
