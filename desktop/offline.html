@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrandHive Studio — Connection Offline</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text-primary: #f9fafb;
+      --text-secondary: #9ca3af;
+      --brand-green: #10b981;
+      --brand-green-hover: #059669;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      user-select: none;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 36px 32px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+    }
+
+    .logo-container {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .logo-container img {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ef4444;
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    p {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      background-color: var(--brand-green);
+      color: #ffffff;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s ease, transform 0.1s ease;
+    }
+
+    .btn:hover:not(:disabled) {
+      background-color: var(--brand-green-hover);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .footer {
+      margin-top: 24px;
+      font-size: 11px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-container">
+      <img src="assets/icon.png" alt="BrandHive Studio Logo">
+    </div>
+
+    <div class="status-badge">
+      <span class="status-dot"></span>
+      Network Offline
+    </div>
+
+    <h1>Unable to Reach BrandHive Studio</h1>
+    <p>
+      The application could not connect to the live production server. Please verify your internet connection or Wi-Fi settings and try again.
+    </p>
+
+    <button id="retry-btn" class="btn" onclick="retryConnection()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19"/>
+      </svg>
+      <span>Retry Connection</span>
+    </button>
+  </div>
+
+  <div class="footer">
+    BrandHive Studio WhatsApp AI Agent • Desktop Client
+  </div>
+
+  <script>
+    function retryConnection() {
+      const btn = document.getElementById('retry-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>Reconnecting...</span>';
+      }
+      // Navigate to trusted production URL
+      window.location.href = 'https://brand-hive-whats-app-ai-agent.vercel.app';
+    }
+
+    // Auto-retry when the system detects connection restored
+    window.addEventListener('online', () => {
+      retryConnection();
+    });
+  </script>
+</body>
+</html>

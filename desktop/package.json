@@ -1,0 +1,53 @@
+{
+  "name": "brandhive-studio-desktop",
+  "version": "1.0.0",
+  "description": "BrandHive Studio WhatsApp AI Agent Windows Desktop Application",
+  "main": "main.js",
+  "author": "BrandHive Studio",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "build:win": "electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "com.brandhivestudio.whatsappagent",
+    "productName": "BrandHive Studio",
+    "executableName": "BrandHiveStudio",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "offline.html",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "BrandHive-Studio-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "BrandHive Studio",
+      "uninstallDisplayName": "BrandHive Studio",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}
