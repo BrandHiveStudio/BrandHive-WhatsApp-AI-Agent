@@ -20,6 +20,8 @@ export interface Message {
   wa_status?: "sent" | "delivered" | "read" | "failed" | null;
   ai_reply_sent?: boolean;
   error?: string | null;
+  sender_type?: "customer" | "ai" | "staff_dashboard" | "staff_wa_app" | null;
+  sender_name?: string | null;
 }
 
 export interface ConversationWithLastMessage extends Conversation {

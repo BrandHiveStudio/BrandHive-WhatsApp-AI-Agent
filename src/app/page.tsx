@@ -10,6 +10,8 @@ import { AdminBehaviorView } from "@/components/admin-behavior-view";
 import { AdminCoexistenceView } from "@/components/admin-coexistence-view";
 import { AdminBrandingView } from "@/components/admin-branding-view";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { ContactAvatar } from "@/components/contact-avatar";
+import { getMessageAttribution } from "@/lib/attribution";
 import type { ConversationWithLastMessage, Message } from "@/lib/types";
 import {
   mergeMessages,
@@ -29,6 +31,7 @@ export default function Dashboard() {
   const [conversations, setConversations] = useState<ConversationWithLastMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -43,10 +46,14 @@ export default function Dashboard() {
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [copiedPhoneToast, setCopiedPhoneToast] = useState(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const selectedIdRef = useRef<string | null>(null);
+  const isNearBottomRef = useRef(true);
   const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const selected = conversations.find((c) => c.id === selectedId);
@@ -151,30 +158,51 @@ export default function Dashboard() {
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
+      setLoadingMessages(false);
       return;
     }
     let active = true;
+    setLoadingMessages(true);
     fetch(`/api/conversations/${selectedId}/messages`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
-        if (active) setMessages(data);
+        if (active) {
+          setMessages(data);
+          setLoadingMessages(false);
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+          }, 40);
+        }
+      })
+      .catch(() => {
+        if (active) setLoadingMessages(false);
       });
     return () => {
       active = false;
     };
   }, [selectedId]);
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages if user was already near bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
-  // Focus input when conversation is opened
+  // Focus textarea when conversation is opened
   useEffect(() => {
     if (selectedId && activeTab === "chats") {
-      setTimeout(() => inputRef.current?.focus(), 80);
+      setTimeout(() => textareaRef.current?.focus(), 80);
     }
   }, [selectedId, activeTab]);
+
+  // Auto-resize composer textarea as text is typed
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+    }
+  }, [input]);
 
   // Realtime Supabase Channel (stable subscription across conversation switches)
   useEffect(() => {
@@ -322,19 +350,41 @@ export default function Dashboard() {
     );
   }
 
+  const handleChatScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    const isNear = distanceFromBottom < 120;
+    isNearBottomRef.current = isNear;
+    setShowScrollBottom(!isNear);
+  };
+
+  const scrollToBottom = (smooth = true) => {
+    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+    setShowScrollBottom(false);
+    isNearBottomRef.current = true;
+  };
+
   async function handleSend() {
     if (!input.trim() || !selectedId || sending) return;
     const textToSend = input.trim();
     setSending(true);
     try {
-      await fetch(`/api/conversations/${selectedId}/send`, {
+      const res = await fetch(`/api/conversations/${selectedId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: textToSend }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.error || "Failed to send message via WhatsApp. Please check connectivity or WhatsApp Business status.");
+        return;
+      }
       setInput("");
       setShowEmojiPicker(false);
+      scrollToBottom(true);
       fetchMessages(selectedId);
+    } catch {
+      alert("Network error: Could not reach server to send WhatsApp message.");
     } finally {
       setSending(false);
     }
@@ -342,7 +392,7 @@ export default function Dashboard() {
 
   function handleInsertEmoji(emoji: string) {
     setInput((prev) => prev + emoji);
-    inputRef.current?.focus();
+    textareaRef.current?.focus();
   }
 
   function handleCopyPhone(phone: string) {
@@ -420,28 +470,7 @@ export default function Dashboard() {
     }).toUpperCase();
   }
 
-  function getInitials(name: string | null, phone: string) {
-    if (name && name.trim()) {
-      const parts = name.trim().split(/\s+/);
-      if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-      return name.slice(0, 2).toUpperCase();
-    }
-    return phone.slice(-2);
-  }
 
-  // Deterministic avatar gradient
-  function getAvatarGradient(phone: string) {
-    const gradients = [
-      "from-emerald-600 to-teal-800",
-      "from-cyan-600 to-blue-800",
-      "from-indigo-600 to-violet-800",
-      "from-teal-600 to-emerald-800",
-      "from-amber-600 to-orange-800",
-    ];
-    let sum = 0;
-    for (let i = 0; i < phone.length; i++) sum += phone.charCodeAt(i);
-    return gradients[sum % gradients.length];
-  }
 
   // Filtered Conversations
   const filteredConversations = useMemo(() => {
@@ -819,32 +848,13 @@ export default function Dashboard() {
                       }`}
                     >
                       {/* Avatar */}
-                      <div className="relative flex-shrink-0">
-                        <div
-                          className={`w-12 h-12 rounded-full bg-gradient-to-br ${getAvatarGradient(
-                            convo.phone
-                          )} flex items-center justify-center text-white text-sm font-semibold shadow-2xs`}
-                        >
-                          {getInitials(convo.name, convo.phone)}
-                        </div>
-
-                        {/* Mode Indicator Mini-badge */}
-                        {convo.mode === "agent" ? (
-                          <span
-                            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--panel-bg)] flex items-center justify-center text-[10px] shadow-xs"
-                            title="AI Auto-Reply Active"
-                          >
-                            🤖
-                          </span>
-                        ) : (
-                          <span
-                            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--panel-bg)] flex items-center justify-center text-[10px] shadow-xs"
-                            title="Human Takeover Active"
-                          >
-                            👤
-                          </span>
-                        )}
-                      </div>
+                      <ContactAvatar
+                        name={convo.name}
+                        phone={convo.phone}
+                        size="lg"
+                        showStatusBadge={true}
+                        mode={convo.mode}
+                      />
 
                       {/* Content */}
                       <div className="flex-1 min-w-0 pr-1">
@@ -961,13 +971,13 @@ export default function Dashboard() {
                     </button>
 
                     {/* Avatar */}
-                    <div
-                      className={`w-10 h-10 rounded-full bg-gradient-to-br ${getAvatarGradient(
-                        selected.phone
-                      )} flex items-center justify-center text-white text-xs font-semibold shadow-2xs flex-shrink-0`}
-                    >
-                      {getInitials(selected.name, selected.phone)}
-                    </div>
+                    <ContactAvatar
+                      name={selected.name}
+                      phone={selected.phone}
+                      size="md"
+                      showStatusBadge={true}
+                      mode={selected.mode}
+                    />
 
                     {/* Contact Info */}
                     <div className="min-w-0">
@@ -1084,11 +1094,13 @@ export default function Dashboard() {
 
                 {/* Chat Message Stream */}
                 <div
+                  ref={chatScrollContainerRef}
+                  onScroll={handleChatScroll}
                   onClick={() => {
                     setChatMenuOpen(false);
                     setShowEmojiPicker(false);
                   }}
-                  className="flex-1 overflow-y-auto px-3 sm:px-6 md:px-12 py-4 space-y-2.5 whatsapp-chat-wallpaper"
+                  className="flex-1 overflow-y-auto px-3 sm:px-6 md:px-12 py-4 space-y-2.5 whatsapp-chat-wallpaper relative"
                 >
                   {/* Security Banner */}
                   <div className="flex justify-center my-2">
@@ -1101,7 +1113,23 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  {messages.length === 0 ? (
+                  {loadingMessages && messages.length === 0 ? (
+                    /* Loading Skeleton (WhatsApp Web staggered bubbles) */
+                    <div className="space-y-4 py-4 animate-pulse">
+                      <div className="flex justify-start">
+                        <div className="h-12 w-48 bg-[var(--panel-border)]/50 rounded-2xl rounded-tl-sm" />
+                      </div>
+                      <div className="flex justify-end">
+                        <div className="h-16 w-64 bg-[var(--panel-border)]/50 rounded-2xl rounded-tr-sm" />
+                      </div>
+                      <div className="flex justify-start">
+                        <div className="h-10 w-40 bg-[var(--panel-border)]/50 rounded-2xl rounded-tl-sm" />
+                      </div>
+                      <div className="flex justify-end">
+                        <div className="h-14 w-56 bg-[var(--panel-border)]/50 rounded-2xl rounded-tr-sm" />
+                      </div>
+                    </div>
+                  ) : messages.length === 0 ? (
                     <div className="flex items-center justify-center h-48 text-center">
                       <span className="px-3.5 py-1.5 rounded-lg bg-[var(--panel-header)]/80 text-xs text-[var(--text-secondary)] shadow-2xs">
                         No messages yet in this conversation.
@@ -1111,6 +1139,7 @@ export default function Dashboard() {
                     messages.map((msg, i) => {
                       const isUser = msg.role === "user";
                       const isAssistant = msg.role === "assistant";
+                      const attr = getMessageAttribution(msg);
 
                       // Date separator check
                       const prevMsg = i > 0 ? messages[i - 1] : null;
@@ -1130,16 +1159,67 @@ export default function Dashboard() {
 
                           <div className={`flex ${isUser ? "justify-start" : "justify-end"}`}>
                             <div
-                              className={`relative max-w-[85%] sm:max-w-[72%] md:max-w-[65%] px-3 py-2 rounded-lg shadow-xs leading-relaxed text-[14px] ${
+                              className={`relative max-w-[85%] sm:max-w-[72%] md:max-w-[65%] px-3.5 py-2.5 rounded-2xl shadow-xs leading-relaxed text-[14px] ${
                                 isUser
-                                  ? "bg-[var(--bubble-in)] text-[var(--bubble-in-text)] rounded-tl-none border border-[var(--bubble-in-border)]"
-                                  : "bg-[var(--bubble-out)] text-[var(--bubble-out-text)] rounded-tr-none"
+                                  ? "bg-[var(--bubble-in)] text-[var(--bubble-in-text)] rounded-tl-sm border border-[var(--bubble-in-border)]"
+                                  : "bg-[var(--bubble-out)] text-[var(--bubble-out-text)] rounded-tr-sm"
                               }`}
                             >
-                              {/* Assistant AI Tag */}
-                              {isAssistant && (
-                                <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--wa-green)] mb-1 uppercase tracking-wider select-none">
-                                  <span>🤖 BrandHive AI</span>
+                              {/* Attribution Badge for Outbound Assistant / Staff / AI messages */}
+                              {isAssistant && attr.badgeLabel && (
+                                <div
+                                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold mb-1 uppercase tracking-wider select-none ${
+                                    attr.badgeStyle === "ai"
+                                      ? "bg-[var(--wa-green)]/15 text-[var(--wa-green)]"
+                                      : attr.badgeStyle === "coexistence"
+                                      ? "bg-amber-500/15 text-amber-500 dark:text-amber-400"
+                                      : attr.badgeStyle === "staff"
+                                      ? "bg-sky-500/15 text-sky-500 dark:text-sky-400"
+                                      : "bg-zinc-500/15 text-[var(--text-secondary)]"
+                                  }`}
+                                  title={attr.description}
+                                >
+                                  <span>{attr.badgeIcon}</span>
+                                  <span>{attr.badgeLabel}</span>
+                                </div>
+                              )}
+
+                              {/* Media attachment display if present */}
+                              {msg.whatsapp_type === "image" && msg.media_url && (
+                                <div className="mb-2 rounded-lg overflow-hidden border border-black/10 dark:border-white/10">
+                                  <img
+                                    src={msg.media_url}
+                                    alt="WhatsApp Media"
+                                    className="max-h-64 w-auto rounded-lg object-contain cursor-pointer hover:opacity-95 transition-opacity"
+                                    onClick={() => window.open(msg.media_url!, "_blank")}
+                                  />
+                                </div>
+                              )}
+                              {msg.whatsapp_type === "document" && (
+                                <div className="mb-2 p-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center gap-2.5">
+                                  <span className="text-xl">📄</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-semibold truncate">Document</p>
+                                    {msg.media_url && (
+                                      <a
+                                        href={msg.media_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[11px] text-sky-500 hover:underline truncate block"
+                                      >
+                                        View / Download
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              {msg.whatsapp_type === "audio" && (
+                                <div className="mb-2 p-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center gap-2">
+                                  <span className="text-xl">🎙️</span>
+                                  <span className="text-xs text-[var(--text-secondary)]">Voice note</span>
+                                  {msg.media_url && (
+                                    <audio controls src={msg.media_url} className="h-8 max-w-[200px]" />
+                                  )}
                                 </div>
                               )}
 
@@ -1169,6 +1249,20 @@ export default function Dashboard() {
                   )}
                   <div ref={messagesEndRef} />
                 </div>
+
+                {/* Floating Scroll-to-Bottom Button */}
+                {showScrollBottom && (
+                  <button
+                    onClick={() => scrollToBottom(true)}
+                    className="absolute bottom-20 right-6 z-20 w-10 h-10 rounded-full bg-[var(--panel-bg)] hover:bg-[var(--panel-hover)] text-[var(--text-primary)] border border-[var(--panel-border)] shadow-lg flex items-center justify-center transition-all cursor-pointer hover:scale-105"
+                    title="Scroll to bottom"
+                    aria-label="Scroll to bottom"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                )}
 
                 {/* Emoji Quick Tray (WhatsApp Web inspired) */}
                 {showEmojiPicker && (
@@ -1222,10 +1316,10 @@ export default function Dashboard() {
                   </button>
 
                   {/* Input Field */}
-                  <div className="flex-1 bg-[var(--input-bg)] border border-[var(--panel-border)] rounded-lg px-4 py-2.5 focus-within:border-[var(--brand-cyan)] transition-colors">
-                    <input
-                      ref={inputRef}
-                      type="text"
+                  <div className="flex-1 bg-[var(--input-bg)] border border-[var(--panel-border)] rounded-xl px-3.5 py-2 focus-within:border-[var(--brand-cyan)] transition-colors min-h-[42px] max-h-[120px] flex items-center">
+                    <textarea
+                      ref={textareaRef}
+                      rows={1}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -1239,7 +1333,7 @@ export default function Dashboard() {
                           ? "Type a manual reply (switches to Human mode)..."
                           : "Type a message..."
                       }
-                      className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
+                      className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none resize-none leading-relaxed max-h-[110px] overflow-y-auto"
                     />
                   </div>
 
